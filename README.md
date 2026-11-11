@@ -240,5 +240,7 @@ python3 -m unittest discover tests
 Here are my general notes/observations from playing each of the following cases of the game:
 
 ### a) 2-Party Game
+On my first trial of the game (not cached), I realized that it was very difficult for an incumbent to lose a live re-election because platforms of candidates are never changed. In the live election method, the Euclidean distance based probability distribution is deterministically computed, and the random slices can only give a candidate a 60-40 advantage (best case) before considering that distance. Thus, if a candidate has a <40% chance of being elected based on Euclidean distance, they will deterministically lose every time. To address this, I will make sure platforms of opponents who lose are randomly regenerated within their party distribution. Over time, the more moderate platforms will stick. This will fix the seniority backlog that prevented me from advancing past state legislator (if it's easier to lose an election, more people will lose their seniority). 
+
 ### b) 4-Party Game
 ### c) 8-Party Game
