@@ -71,7 +71,7 @@ The results (per cycle) in the historical data are what would be most informativ
 
 In essence, you only care about the data from where you are trying to run, so you can tune your platform and maximize the chances of being elected. The ultimate goal is to become president, so you need the presidential election trends. Along the way to becoming president, you may hold a number of other offices, but those are specific to one state, one city, and one district, so you don't need to keep track of another other areas. You won't know in advance what Senate cycle you will fall into, so all three seats from your state are tracked just in case. 
 
-This data is written to a spreadsheet where the fields in quotation marks are table headers and each row is a cycle of data (the party of the incumbent holding that office for that cycle).
+This data is written to a spreadsheet called "historical_data.xlsx" in the "data" subfolder, where the fields in quotation marks are table headers and each row is a cycle of data (the party of the incumbent holding that office for that cycle). The three senate seats can be treated as three separate columns. 
 
 #### How Historical Simulation Works
 As mentioned before, this simulation doesn't count individual votes, since that is computationally expensive. For historical simulation data, you only see the winning party for each position of interest for each cycle. Thus, for each race you get data on, the program generates a probability distribution for each party in a given race, and randomly picks the winner. The candidates copy the party platforms exactly to save time, and are not assigned names. 
@@ -89,9 +89,40 @@ In real life, the party in power is often blamed for things that go wrong, and m
 On each issue, the population shifts 0.01 from the status quo value of that issue. However, the shift cannot take the position outside the range of 0.01 and 0.99 (if it would, there is no shift).
 
 ### e) Present Day Elections
-After viewing the historical data (if you requested it), you enter your platform and begin your first election. 
+After viewing the historical data (if you requested it), you enter your platform and begin your first election. At that moment, we start to assign names to candidates (see below).
 
-Due to the all politics is local rule, this simulation ignores any effects that the actions that higher level politicians have on the voting decisions of people in the district.
+#### Senority
+As I mentioned before, the ultimate objective of the game is to be elected president. However, you don't necessarily "level up" immediately after each election you win. There are three things that determine whether or not you can run for a higher office after you win an election: vacancies in higher offices, seniority, and victory size (the tie breaker). A vacancy is an office that your party doesn't hold or plans to vacate so the incumbent can run for a higher office. Seniority is the number of years a politician has served in a specific office. Lastly, victory size is the percentage of the vote an incumbent received in their latest election. 
+
+The system of seniority functions via the tier of offices shown here:
+
+1. President (not factored into seniority because you can only serve one term, plus you win the game if you become president)
+2. Governors (the most senior governor at the time of a presidential election becomes the nominee for president)
+3. Senators (the most senior senator from a state becomes nominee for governor of the state if there is a vacancy)
+4. House Members (the most senior house members from a state are assigned to run for vacancies in the Senate seats for that state)
+5. Mayors (the most senior mayors in a state are are assigned to run for vacant house seats for that state)
+6. State Legislators (the most senior state legislator from a city becomes nominee for mayor if there is a vacancy)
+7. City Council Members (the most senior city council members are assigned to run for vacancies in the State Legislature for their district)
+
+This system is only practiced by your party, since (for the purposes of this simulation) it doesn't matter what the names of opposing candidates are. If there are no politicians from your party at a specific tier to fill a vacancy, a politician from a lower tier run to fill it (for example, if there are no governors in your party, the most senior Senator from your party runs for president). 
+
+#### Naming Candidates In Your Party
+At the time of your first election, the following politicians are assigned a name from "in_party.txt" if they are in your party:
+
+- Incumbent president
+- Incumbent governors
+- Sitting senators 
+- Sitting house members of your state
+- Incumbent mayors in your state
+- Sitting state legislators from your city
+- City council candidates from your city (for the game, assume all these seats are vacant when you start)
+
+These candidates are all added to "seniority.xlsx" in the data subfolder. The column headers are "Name", "Level of Office", "Seniority", and "Victory Size". The level of office is a number (1 for president through 7 for city council as shown above). In seniority, use the data from "historical_data.xlsx" to determine the number of consecutive years, ending now, that the office has been held by your party, and enter that number. Since we didn't track vote counts for historical elections, put 0 in victory size. 
+
+This list is updated every cycle for which you are still in the game, naming and adding new candidates from your party that win the positions above, and removing candidates who lose. If you keep winning, you will see yourself rise up the list. 
+
+#### Election Night Live: What You See
+The default election simulation mode is the mode outlined for generating historical data (see above). However, there is a live mode that lets you see election results for the current cycle as they come in.
 
 1. Compute a probability distribution over the candidates
 2. Generate random cutpoints for the interval (0,1) to slice it, and give one slice to each candidate
@@ -109,4 +140,6 @@ But, these scores are completely random and not related to their actual chances 
 
 Since this operation perturbed the probability distribution, we need to standardize the scores again to arrive at the final shares of the vote. For elections with a larger scope than 1 district, these shares are summed over all districts participating in those elections (every district has the same population by design) and standardized one final time.
 
-If there are only 2 parties, then the winner will have at least 50% of the vote. But this system also works for ranked-choice voting. This simulation doesn't actually do multiple rounds or have voters rank candidates. It simulates one round, gets the shares, and multiplies by the number of rounds so the winner is guaranteed to have at least 50%. This represents that over all rounds, at least 50% of voters chose that candidate for one of the rounds. The number of rounds R is determined by P, according to the function R(P) = floor(P/2).  
+If there are only 2 parties, then the winner will have at least 50% of the vote. But this system also works for ranked-choice voting. This simulation doesn't actually do multiple rounds or have voters rank candidates. It simulates one round, gets the shares, and multiplies by the number of rounds so the winner is guaranteed to have at least 50%. This represents that over all rounds, at least 50% of voters chose that candidate for one of the rounds. The number of rounds R is determined by P, according to the function R(P) = floor(P/2).
+
+Due to the all politics is local rule, this simulation ignores any effects that the actions that higher level politicians have on the voting decisions of people in the district.
