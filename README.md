@@ -164,11 +164,62 @@ Additionally, "historical_data.xlsx" will be updated with a new row for each cyc
 Every cycle, "seniority.xlsx" has to be updated. Candidates who lost their elections will be removed from the list. Candidates who won elections will update their victory size field. Candidates who moved up a tier will update that field and set their seniority to 0. Candidates who were not up for election add 2 to their seniority. New candidates who were not already on the list but won relevant elections (see 'Naming Candidates In Your Party') are named if they did not already have a name, and added to the list with the appropriate tier, 0 seniority, and their victory size. 
 
 #### Your Political Career
-The game has a 25-cycle (50-year) time limit. Cycle 1 is the first year of the historical data, and you can simulate all way through Cycle 50 before you start. Suppose you start at Cycle 51. The ultimate objective is to be elected president in Cycle 75 or earlier. If you lose any election, you lose the game. If you are not elected president by the end of Cycle 75, you also lose. This is why it's important that you pick a path (district, city, state) with similar position vectors. You can't change your party once you set your positions, so you want those population position vectors to be within your party range. Lastly, the average of the entire nation is close to 0.5 for each position, so you want to pick moderate positions to maximize your chances of winning that race. 
+The game has a 25-cycle (50-year) time limit. Cycle 1 is the first year of the historical data, and you can simulate all way through Cycle 50 before you start. Suppose you start at Cycle 51. The ultimate objective is to be elected president in Cycle 75 or earlier. If you lose any election, you lose the game. If you are not elected president by the end of Cycle 75, you also lose. This is why it's important that you pick a path (district, city, state) with similar position vectors. You can't change your party once you set your positions, so you want those population position vectors to be within your party range. Lastly, the average of the entire nation is close to 0.5 for each position, so you want to pick moderate positions to maximize your chances of winning that race. Once you finish the game, you have the option to save the results or discard them. If you choose to save the results, the contents of the data subfolder are moved to into the results subfolder, into a subfolder of results with a date/time stamp. The data subfolder is always wiped clean to prepare for the next game. 
 
 ## 2. Codebase Architecture
+```
+AllPoliticsIsLocal/
+├── names/                    # Lists of names used for parties and candidates
+│   ├── parties.txt           # 8 political party names
+│   └── in_party.txt          # 500 candidate names (first and last)
+│   └── out_parties.txt.      # 2500 candidate names (first and last)
+├── data/                     # Spreadsheets used during the simulation
+│   ├── historical_data.xlsx  # Compact election cycle data, past elections generated once, then updated after each cycle
+│   └── seniority.xlsx        # Ongoing roster of seniority in your party, updated after each cycle
+├── results/                  # Cached runs of the game, only for viewing by the user
+├── constants.py              # Stores hyperparameters and global constants of the game 
+├── custom_types.py           # Configures custom types for clean object construction code
+├── simulator.py              # Runs election simulations, contains voting logic
+├── reporter.py               # For live elections, reports updates and final results to the user
+├── data_tracker.py           # Makes dynamic updates to data, stores new data
+├── runner.py                 # Driver code, takes in user input, runs game
+├── tests/                    # Automated unit and integration test suite
+│   ├── test_construction.py  # Tests that all data structures are built correctly
+│   ├── test_naming.py        # Tests that naming rules are followed
+│   ├── test_seniority.py     # Tests that the seniority process is implemented correctly
+│   ├── test_voting.py        # Tests that the election/voting math is correct
+│   ├── test_rules.py         # Tests that the rules of the game (flow of gameplay, stop conditions) are followed
+│   ├── test_live.py          # Tests that live elections are reported to the user correctly
+│   ├── test_storage.py       # Tests that data is stored and/or exported correctly
+│   └── test_smoke.py         # Rapid end-to-end integration smoke test
+└── README.md                 # Project specification, run documentation, architecture, and usage
+```
 
 ## 3. Installation & Usage
+### Prerequisites
+The project requires Python (TODO: add version) with the following packages:
+- TODO: Add packages
+
+Install dependencies via pip:
+```bash
+pip install (TODO: add packages)
+```
+
+### Running the Simulator
+Run the interactive runner:
+```bash
+python3 runner.py
+```
+
+### Global Hotkeys (Usable at Any Prompt)
+- **`Q` or `q`**: Cleanly quit the game at any prompt, wipes data subfolder.
+- **`R` or `r`**: Cleanly restart the game at any prompt, wipes data subfolder.
+
+### Running Automated Tests
+Run all unit, mathematical, pipeline, smoke, and file export tests:
+```bash
+python3 -m unittest discover tests
+```
 
 ## 4. Personal Experiments / High Scores (Coming Soon)
 Here are my general notes/observations from playing each of the following cases of the game:
