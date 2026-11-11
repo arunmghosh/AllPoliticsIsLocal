@@ -122,7 +122,21 @@ These candidates are all added to "seniority.xlsx" in the data subfolder. The co
 This list is updated every cycle for which you are still in the game, naming and adding new candidates from your party that win the positions above, and removing candidates who lose. If you keep winning, you will see yourself rise up the list. 
 
 #### Election Night Live: What You See
-The default election simulation mode is the mode outlined for generating historical data (see above). However, there is a live mode that lets you see election results for the current cycle as they come in.
+The default election simulation mode is the mode outlined for generating historical data (see above). However, there is also a live mode that lets you see election results for the current cycle as they come in. The elections that you see in live mode are the elections for seats of the current tier you are running for or currently occupy (if you are not up for reelection or chosen to vacate to run for higher office). Here is a breakdown of which races are in your live scope:
+
+| Office Running For And/Or Hold | Elections Reported To You |
+| --- | --- |
+| President | Presidential Election |
+| Governor | Gubernatorial Elections |
+| Senate | Senate Election In Your State |
+| House | House Elections In Your State |
+| Mayor | Mayoral Elections In Your State |
+| State Legislator | State Legislature Elections In Your City |
+| City Council | City Council Elections In Your City |
+
+If you are running for an office in a given cycle, that election will always be reported to you live. For all elections reported to you live, every candidate in it has a name, drawn from the appropriate text file if they don't already have one. No duplicate names are allowed. Since opposing candidates also run for a fixed office for simplicity, draw fresh names for your opponents every time you level up, but use the same names if you are running for reelection or watching the same set of elections. Names within your party are recyclable (with the suffix 2, 3, etc if it is drawn that many times). Name drawings are not random. The names are shuffled once at the beginning of the game, and then drawn in order (pointers keep track of where you left off). When you draw all the names in "in_party.txt", loop back to the beginning and increment the suffix. There should be plenty of names for the opponents, so you will never need to recycle. 
+
+When you watch election results on election night, you don't get the full result at once. You see votes trickle in until a winner is able to be called. To simulate this, live elections are done in 10 batches of 1000 votes each at the district level (sum results from districts to get results for higher offices). Here is the process for getting the live vote counts: 
 
 1. Compute a probability distribution over the candidates
 2. Generate random cutpoints for the interval (0,1) to slice it, and give one slice to each candidate
@@ -132,7 +146,7 @@ The default election simulation mode is the mode outlined for generating histori
 
 Let's walk through those steps in more detail. 
 
-We know that each district has a position vector, and so does each candidate. Compute the Euclidean distances between the district position and each candidate position. A district is most likely to elect the candidate closest to their ideology (i.e., the candidate with the smallest distance from them). Take the reciprocals of these distances so a higher number corresponds to a higher probability of being elected. Standardize these new scores to get a probability distribution.
+The first step is the same as in the default mode, except we create a probability distribution over the candidates instead of the parties. Whenever a candidate is instantiated, they are assigned a permanent position vector for the game, drawn randomly (following the liberal and conservative views of their party). You will be able to tweak your own position vector, within your party range, every time you are up for election. 
 
 Assume that there are P parties, so there are P candidates in every election. We want to randomly divide the interval (0,1) into P slices. To do this, we generate a sequence of P - 1 cutpoints. We now have P lengths that sum to 1, which will serve as the initial scores for the candidates. 
 
@@ -142,4 +156,23 @@ Since this operation perturbed the probability distribution, we need to standard
 
 If there are only 2 parties, then the winner will have at least 50% of the vote. But this system also works for ranked-choice voting. This simulation doesn't actually do multiple rounds or have voters rank candidates. It simulates one round, gets the shares, and multiplies by the number of rounds so the winner is guaranteed to have at least 50%. This represents that over all rounds, at least 50% of voters chose that candidate for one of the rounds. The number of rounds R is determined by P, according to the function R(P) = floor(P/2).
 
-Due to the all politics is local rule, this simulation ignores any effects that the actions that higher level politicians have on the voting decisions of people in the district.
+If a candidate reaches 50% before all of the votes are in, the race will be called right then (just by a print statement). The remaining votes will still be counted to get accurate victory sizes.
+
+Additionally, "historical_data.xlsx" will be updated with a new row for each cycle in which the user is playing the game. Due to the all politics is local rule, this live simulation ignores any effects that the actions that higher level politicians have on the voting decisions of people in the district. This means that the Natural Party Preference Oscillation Mechanism only applies to districts. Races not monitored live will be simulated in the default way for speed, and the mechanism will apply to any population level. No races that are not monitored live or tracked in "historical_data.xlsx" will ever be simulated, which makes sense because people generally only care about elections in which they personally voted or those that get national press coverage. 
+
+#### Updating Seniority
+Every cycle, "seniority.xlsx" has to be updated. Candidates who lost their elections will be removed from the list. Candidates who won elections will update their victory size field. Candidates who moved up a tier will update that field and set their seniority to 0. Candidates who were not up for election add 2 to their seniority. New candidates who were not already on the list but won relevant elections (see 'Naming Candidates In Your Party') are named if they did not already have a name, and added to the list with the appropriate tier, 0 seniority, and their victory size. 
+
+#### Your Political Career
+The game has a 25-cycle (50-year) time limit. Cycle 1 is the first year of the historical data, and you can simulate all way through Cycle 50 before you start. Suppose you start at Cycle 51. The ultimate objective is to be elected president in Cycle 75 or earlier. If you lose any election, you lose the game. If you are not elected president by the end of Cycle 75, you also lose. This is why it's important that you pick a path (district, city, state) with similar position vectors. You can't change your party once you set your positions, so you want those population position vectors to be within your party range. Lastly, the average of the entire nation is close to 0.5 for each position, so you want to pick moderate positions to maximize your chances of winning that race. 
+
+## 2. Codebase Architecture
+
+## 3. Installation & Usage
+
+## 4. Personal Experiments / High Scores (Coming Soon)
+Here are my general notes/observations from playing each of the following cases of the game:
+
+### a) 2-Party Game
+### b) 4-Party Game
+### c) 8-Party Game
