@@ -44,8 +44,10 @@ Candidates are elected by people, who each belong to the nation, a state, a city
 #### Creation of Position Vectors
 After you enter the name for the nation, position vectors of each district are generated using the following algorithm:
 1. Every state is given a random position vector with each position drawn randomly from (0,1)
-2. Every city within each state is given a random position vector with each position drawn randomly from a triangular distribution with endpoints at 0 and 1, and the peak (highest probability) at the position of the state
-3. Every district with each city is given a random position vector with each position drawn randomly from a triangular distribution with endpoints at 0 and 1, and the peak at the position of the city
+2. Every city within each state is given a random position vector with each position drawn randomly from a Beta distribution with mean of the position of the state
+3. Every district with each city is given a random position vector with each position drawn randomly from a Beta distribution with mean of the city position
+
+Let M be the parent population position, and K be a scaling coefficient (4 for city position generation, 10 for district). The Beta distribution used to generate child population positions is Beta(KM, K(1-M)).
 
 The reason this project is called "All Politics Is Local" is because only the district position vectors actually matter for voting. All higher level results are just sums of district results. 
 
@@ -76,17 +78,10 @@ This data is written to a spreadsheet called "historical_data.xlsx" in the "data
 #### How Historical Simulation Works
 As mentioned before, this simulation doesn't count individual votes, since that is computationally expensive. For historical simulation data, you only see the winning party for each position of interest for each cycle. Thus, for each race you get data on, the program generates a probability distribution for each party in a given race, and randomly picks the winner. The candidates copy the party platforms exactly to save time, and are not assigned names. 
 
-We know that each state, city, and district has a position vector, and so does each party. Initialize the national position vector as 0.5 on all issues. Compute the Euclidean distances between the population (nation, state, city, or district) position and each party platform. A population is most likely to elect the party closest to their ideology (i.e., the party with the smallest distance from them). Take the reciprocals of these distances (plus a smoothing term to avoid divide by zero) so a higher score corresponds to a higher probability of being elected. Standardize these new scores to get a probability distribution.
+We know that each state, city, and district has a position vector, and so does each party. Initialize the national position vector as 0.5 on all issues. Compute the Euclidean distances between the population (nation, state, city, or district) position and each party platform. A population is most likely to elect the party closest to their ideology (i.e., the party with the smallest distance from them). Add a smoothing term of 0.01 to avoid zero distances, then take the square roots of those distances to be less punishing. Next, take the reciprocals of these numbers so a higher score corresponds to a higher probability of being elected. Standardize these new scores to get a probability distribution.
 
 #### Natural Party Preference Oscillation Mechanism
-In real life, the party in power is often blamed for things that go wrong, and may experience a backlash in the next election. To capture this effect in the historical data, population position vectors will dynamically adjust ahead of each cycle depending on who their incumbent politicians are. The "backlash" is a shift away from the status quo. The status quo is modeled as:
-
-- Nation: Position vector of the president
-- States: Compute average position vector of the governor and 3 senators
-- Cities: Compute average position vector of the mayor and house member
-- Districts: Compute average position vector of the state legislator and city council member
-
-On each issue, the population shifts 0.01 from the status quo value of that issue. However, the shift cannot take the position outside the range of 0.01 and 0.99 (if it would, there is no shift).
+In real life, the party in power is often blamed for things that go wrong, and may experience a backlash in the next election. To capture this effect, incumbent politicians will experience a grudge factor (1.06^C, where C is the number of consecutive cycles they've been in their current office). This factor is multiplied with their Euclidean distance, lowering their chances of being re-elected. 
 
 ### e) Present Day Elections
 After viewing the historical data (if you requested it), you enter your platform and begin your first election. At that moment, we start to assign names to candidates (see below).
@@ -146,24 +141,18 @@ If you are running for an office in a given cycle, that election will always be 
 When you watch election results on election night, you don't get the full result at once. You see votes trickle in until a winner is able to be called. To simulate this, live elections are done in 10 batches of 1000 votes each at the district level (sum results from districts to get results for higher offices). Here is the process for getting the live vote counts: 
 
 1. Compute a probability distribution over the candidates
-2. Generate random slices of the interval (0,1) to slice it, and give one slice to each candidate
-3. Multiply the length of a candidate's slice by that candidate's share of the distribution in step 1
-4. Standardize the new lengths to get that candidate's share of the vote
-5. Multiply each share by the number of rounds of voting (determined by the number of candidates
+2. Get vote shares by sampling from a Dirichlet distribution using those probabilities
+3. Multiply each share by the number of rounds of voting (determined by the number of candidates
 
 Let's walk through those steps in more detail. 
 
 The first step is the same as in the default mode, except we create a probability distribution over the candidates instead of the parties. Whenever a candidate is instantiated, they are assigned a permanent position vector for the game, drawn randomly (following the liberal and conservative views of their party). You will be able to tweak your own position vector, within your party range, every time you are up for election. 
 
-Assume that there are P parties, so there are P candidates in every election. We want to randomly divide the interval (0,1) into P slices. To do this, we generate P numbers between 0.8/P and 1.2/P. Standardize the scores so they sum to 1, and give one to each candidate.
-
-But, these scores are completely random and not related to their actual chances of being elected. Thus, we rescale a candidate's score by multiplying it by the candidate's chance of being elected (computed in step 1). 
-
-Since this operation perturbed the probability distribution, we need to standardize the scores again to arrive at the final shares of the vote. For elections with a larger scope than 1 district, these shares are summed over all districts participating in those elections (every district has the same population by design) and standardized one final time.
+Assume that there are P parties, so there are P candidates in every election. We want to sample from a Dirichlet distribution with P shape parameters. Each shape parameter is 20.0*(chance of a candidate being elected). The 20.0 is a scaling coefficient that allows for more variance in the vote share draws, and the chances of candidates being elected are taken directly from the probability distribution computed in step 1. 
 
 If there are only 2 parties, then the winner will have at least 50% of the vote. But this system also works for ranked-choice voting. This simulation doesn't actually do multiple rounds or have voters rank candidates. It simulates one round, gets the shares, and multiplies by the number of rounds so the winner is guaranteed to have at least 50%. This represents that over all rounds, at least 50% of voters chose that candidate for one of the rounds. The number of rounds R is determined by P, according to the function R(P) = floor(P/2).
 
-Additionally, "historical_data.xlsx" will be updated with a new row for each cycle in which the user is playing the game. Due to the all politics is local rule, this live simulation method ignores any effects that the actions that higher level politicians have on the voting decisions of people in the district. This means that, for live elections, the Natural Party Preference Oscillation Mechanism only applies to districts. Races not monitored live will be simulated in the default way for speed, and the mechanism will apply to any population level. No races that are not monitored live or tracked in "historical_data.xlsx" will ever be simulated, which makes sense because people generally only care about elections in which they personally voted or those that get national press coverage. 
+Additionally, "historical_data.xlsx" will be updated with a new row for each cycle in which the user is playing the game. Races not monitored live will be simulated in the default way for speed. No races that are not monitored live or tracked in "historical_data.xlsx" will ever be simulated, which makes sense because people generally only care about elections in which they personally voted or those that get national press coverage. 
 
 To ensure that you are not shown everything at once, you are prompted to continue every time a batch is completed, so you can view the results at your own pace. 
 
@@ -248,7 +237,27 @@ python3 -m unittest discover tests -v
 Here are my general notes/observations from playing each of the following cases of the game:
 
 ### a) 2-Party Game
-On my first trial of the game (not cached), I realized that it was very difficult for an incumbent to lose a live re-election because platforms of candidates are never changed. In the live election method, the Euclidean distance based probability distribution is deterministically computed, and the random slices can only give a candidate a 60-40 advantage (best case) before considering that distance. Thus, if a candidate has a <40% chance of being elected based on Euclidean distance, they will deterministically lose every time. To address this, I will make sure platforms of opponents who lose are randomly regenerated within their party distribution. Over time, the more moderate platforms will stick. This will fix the seniority backlog that prevented me from advancing past state legislator (if it's easier to lose an election, more people will lose their seniority). 
+#### Initial Run
+On my first trial of the game (not cached), I found the following bugs/structural problems with the codebase:
+
+- Possible divide by zero error in calculating inverse distance (if candidate and population platforms are identical)
+- Platforms of opposing candidates are never changed
+- In the live election method, the random slices can only give a candidate a 60-40 advantage (best case) before considering that distance. Thus, if a candidate has a <40% chance of being elected based on Euclidean distance, they will deterministically lose every time.
+- Any noise from the random slices was effectively cancelled out over district vote count aggregation
+- Bugs 2-3 made it nearly impossible for an incumbent to lose re-election
+- Incumbents almost always winning re-election created a backlog in seniority, making it nearly impossible to advance
+- In the mechanism for backlash against incumbents, the shift away from incumbent position values doesn't always benefit the opponents (it can make the district even less moderate, for instance)
+- The random distribution used to draw city and district vectors (triangular with mode at parent population position vector) didn't have the correct mean, causing the aggregation of district results to significantly differ from one time generated city results, for example
+
+#### Bugfixing (Round 1)
+I made the following adjustments to address the bugs I found in the initial run:
+
+- Added a smoothing term of 0.01 to add to Euclidean distance, and then took square root before inversion (less punishing)
+- Randomly resample opponent candidate platforms from their party range unless they are the incumbent
+- Replaced random slice method to sample from a Dirichlet distribution (see 'Election Night Live: What You See' above)
+- Fixed noise cancellation and incorrect distribution mean for initial generation of population position vectors by sampling the population position vectors from Beta distributions (see 'Creation of Position Vectors' above)
+- Changed the mechanism for backlash against incumbents to be a multiplier to an incumbent's Euclidean distance to a population position vector (1.06^C, where C is the number of consecutive cycles the incumbent has been in office)
+- All of those fixes made it less likely for incumbents to win re-election, and thus fixed the seniority backlog, making it much easier to advance to higher office
 
 ### b) 4-Party Game
 ### c) 8-Party Game
