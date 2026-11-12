@@ -41,7 +41,6 @@ from custom_types import (
     SeatKey,
 )
 from simulator import (
-    apply_default_oscillation,
     format_seat_label,
     get_seat_districts,
     get_seat_wave,
@@ -325,22 +324,24 @@ def run_historical_simulation(
         streaks[sk] = (winner, 0)
 
     rows: list[dict] = []
+    num_parties = len(nation.parties)
     for cycle in range(1, num_cycles + 1):
-        if cycle > 1:
-            apply_default_oscillation(
-                nation,
-                home_state=home_state,
-                home_city=home_city,
-                home_district=home_district,
-                include_city_council_all=False,
-            )
-
         for sk in tracked_keys:
             tier = sk[0]
             wave = get_seat_wave(sk, nation)
             if is_election_cycle(tier, cycle, wave):
                 pop_pos = get_seat_population_position(nation, sk)
-                winner = run_default_election(pop_pos, party_platforms, rng=rng)
+                prev_party, prev_streak = streaks[sk]
+                inc_cycles = [
+                    prev_streak if (p == prev_party and prev_streak > 0) else 0
+                    for p in range(num_parties)
+                ]
+                winner = run_default_election(
+                    pop_pos,
+                    party_platforms,
+                    rng=rng,
+                    incumbent_cycles=inc_cycles,
+                )
                 set_seat_party(nation, sk, winner, cycle=cycle)
 
             current_party = get_seat_party(nation, sk)
@@ -432,6 +433,7 @@ class SeniorityTracker:
         self.roster: dict[SeatKey, Candidate] = {}
         self.opponent_cache: dict[SeatKey, dict[int, Candidate]] = {}
         self.cached_opponent_tier: Optional[int] = None
+        self.seat_streaks: dict[SeatKey, tuple[Optional[int], int]] = {}
 
     def active_names(self) -> set[str]:
         """Return all currently active in-party and cached opponent names."""
@@ -455,6 +457,7 @@ class SeniorityTracker:
         """Populate initial in-party officeholders from historical data and write seniority.xlsx."""
         rng = rng or random.Random()
         self.roster.clear()
+        self.seat_streaks = dict(streaks)
         party_platform = nation.parties[player_party].platform
 
         # Exclude City Council in home city (vacant at start)
@@ -509,6 +512,7 @@ class SeniorityTracker:
                 seniority=seniority_years,
                 victory_size=0.0,
                 is_player=False,
+                cycles_in_office=seniority_years // YEARS_PER_CYCLE,
             )
 
         self.save()
@@ -590,6 +594,7 @@ class SeniorityTracker:
                 chosen = pool[0]
                 if chosen.seat_id is not None:
                     self.roster.pop(chosen.seat_id, None)
+                    self.seat_streaks.pop(chosen.seat_id, None)
                 return chosen
         return None
 
@@ -603,6 +608,7 @@ class SeniorityTracker:
         # Term-limit outgoing President when a Presidential election cycle starts
         if is_election_cycle(TIER_PRESIDENT, cycle):
             self.roster.pop((TIER_PRESIDENT, ()), None)
+            self.seat_streaks.pop((TIER_PRESIDENT, ()), None)
 
         assignments: dict[SeatKey, ElectionAssignment] = {}
         player_assignment: Optional[ElectionAssignment] = None
@@ -787,6 +793,28 @@ class SeniorityTracker:
             ]
         raise ValueError(f"Unknown tier: {live_tier}")
 
+    def get_incumbent_grudge(
+        self,
+        seat_key: SeatKey,
+        assignment: Optional[ElectionAssignment],
+        player_party: int,
+    ) -> tuple[Optional[int], int]:
+        """Return (incumbent_party, consecutive_cycles) currently holding seat_key."""
+        if assignment is not None:
+            if assignment.is_reelection and assignment.candidate is not None:
+                return player_party, assignment.candidate.cycles_in_office
+            streak_party, streak_cycles = self.seat_streaks.get(seat_key, (None, 0))
+            if streak_party is not None and streak_party != player_party and streak_cycles > 0:
+                return streak_party, streak_cycles
+            return None, 0
+
+        if seat_key in self.roster:
+            return player_party, self.roster[seat_key].cycles_in_office
+        streak_party, streak_cycles = self.seat_streaks.get(seat_key, (None, 0))
+        if streak_party is not None and streak_cycles > 0:
+            return streak_party, streak_cycles
+        return None, 0
+
     def build_live_races(
         self,
         live_tier: int,
@@ -857,6 +885,9 @@ class SeniorityTracker:
                         seat_opponents[party.index] = opp
                     candidates.append(opp)
 
+            inc_party, inc_cycles = self.get_incumbent_grudge(
+                sk, assignment, player_party
+            )
             races.append(
                 LiveRaceSpec(
                     seat_key=sk,
@@ -865,6 +896,8 @@ class SeniorityTracker:
                     districts=get_seat_districts(sk, nation),
                     candidates=candidates,
                     has_player=in_cand.is_player,
+                    incumbent_party=inc_party,
+                    incumbent_cycles=inc_cycles,
                 )
             )
         return races
@@ -883,11 +916,15 @@ class SeniorityTracker:
         rng = rng or random.Random()
         player_party = player.party_index
 
-        # Candidates not up for election this cycle gain +2 years seniority
+        # Candidates not up for election this cycle gain +2 years seniority and +1 cycle
         elected_keys = set(outcomes.keys())
         for sk, cand in list(self.roster.items()):
             if sk not in elected_keys:
                 cand.seniority += YEARS_PER_CYCLE
+                cand.cycles_in_office += 1
+        for sk, (streak_party, streak_count) in list(self.seat_streaks.items()):
+            if sk not in elected_keys and streak_party is not None:
+                self.seat_streaks[sk] = (streak_party, streak_count + 1)
 
         for sk, (winner_party, victory_size) in outcomes.items():
             set_seat_party(nation, sk, winner_party, cycle=cycle)
@@ -907,6 +944,7 @@ class SeniorityTracker:
                         seniority=0,
                         victory_size=victory_size,
                         is_player=False,
+                        cycles_in_office=1,
                     )
                 else:
                     nominee.tier = sk[0]
@@ -914,10 +952,13 @@ class SeniorityTracker:
                     nominee.victory_size = victory_size
                     if assignment is not None and assignment.is_reelection:
                         nominee.seniority += YEARS_PER_CYCLE
+                        nominee.cycles_in_office += 1
                     else:
                         nominee.seniority = 0
+                        nominee.cycles_in_office = 1
 
                 self.roster[sk] = nominee
+                self.seat_streaks[sk] = (player_party, nominee.cycles_in_office)
                 if nominee.is_player:
                     player.current_tier = sk[0]
                     player.current_seat = sk
@@ -926,6 +967,20 @@ class SeniorityTracker:
                 # If an incumbent from player's party lost reelection, remove from roster
                 if sk in self.roster and self.roster[sk].party_index == player_party:
                     self.roster.pop(sk, None)
+                prev_party, prev_count = self.seat_streaks.get(sk, (None, 0))
+                if prev_party == winner_party and prev_count > 0:
+                    self.seat_streaks[sk] = (winner_party, prev_count + 1)
+                else:
+                    self.seat_streaks[sk] = (winner_party, 1)
+
+            # Keep winning opposing candidate's platform; redraw losing opposing candidates' platforms
+            seat_opponents = self.opponent_cache.get(sk)
+            if seat_opponents is not None:
+                for opp_party, opp_cand in seat_opponents.items():
+                    if opp_party != winner_party:
+                        opp_cand.platform = sample_candidate_platform(
+                            nation.parties[opp_party].platform, rng=rng
+                        )
 
         self.save()
 

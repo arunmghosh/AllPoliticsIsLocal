@@ -1,4 +1,4 @@
-"""Election simulation engine, world construction, voting math, and oscillation logic."""
+"""Election simulation engine, world construction, voting math, and grudge backlash logic."""
 
 import itertools
 import math
@@ -8,10 +8,13 @@ from typing import Optional
 import numpy as np
 
 from constants import (
-    BACKLASH_SHIFT,
     CITIES_PER_STATE,
     CONSERVATIVE_PLATFORM,
+    DIRICHLET_KAPPA,
     DISTRICTS_PER_CITY,
+    GRUDGE_BASE,
+    KAPPA_CITY,
+    KAPPA_STATE,
     LIBERAL_PLATFORM,
     MAX_ISSUES,
     MAX_POS,
@@ -22,8 +25,6 @@ from constants import (
     NUM_WAVES,
     OFFICE_NAMES,
     SENATORS_PER_STATE,
-    SLICE_MAX_FACTOR,
-    SLICE_MIN_FACTOR,
     SMOOTHING_TERM,
     TIER_CITY_COUNCIL,
     TIER_GOVERNOR,
@@ -81,6 +82,16 @@ def build_parties(num_issues: int, party_names: list[str]) -> list[Party]:
     ]
 
 
+def sample_beta_position(
+    parent_mu: float, kappa: float, rng: Optional[random.Random] = None
+) -> float:
+    """Sample a coordinate in [0.01, 0.99] from Beta(kappa * mu, kappa * (1 - mu))."""
+    rng = rng or random.Random()
+    alpha = kappa * parent_mu
+    beta = kappa * (1.0 - parent_mu)
+    return clamp_and_round_position(rng.betavariate(alpha, beta))
+
+
 def build_nation(
     name: str,
     issues: list[str],
@@ -100,13 +111,13 @@ def build_nation(
         cities: list[City] = []
         for c_idx in range(CITIES_PER_STATE):
             city_pos = [
-                clamp_and_round_position(rng.triangular(0.0, 1.0, state_pos[k]))
+                sample_beta_position(state_pos[k], KAPPA_STATE, rng=rng)
                 for k in range(num_issues)
             ]
             districts: list[District] = []
             for d_idx in range(DISTRICTS_PER_CITY):
                 dist_pos = [
-                    clamp_and_round_position(rng.triangular(0.0, 1.0, city_pos[k]))
+                    sample_beta_position(city_pos[k], KAPPA_CITY, rng=rng)
                     for k in range(num_issues)
                 ]
                 districts.append(
@@ -193,11 +204,17 @@ def compute_probabilities(
     population_pos: PositionVector,
     platforms: list[PositionVector],
     smoothing: float = SMOOTHING_TERM,
+    incumbent_cycles: Optional[list[int]] = None,
 ) -> list[float]:
-    """Convert ideological Euclidean distances to a normalized probability distribution."""
+    """Convert ideological Euclidean distances (scaled by 1.06^C grudge) to probabilities."""
+    cycles = incumbent_cycles if incumbent_cycles is not None else [0] * len(platforms)
     scores = [
-        1.0 / (euclidean_distance(population_pos, plat) + smoothing)
-        for plat in platforms
+        1.0
+        / math.sqrt(
+            euclidean_distance(population_pos, plat) * (GRUDGE_BASE ** max(0, cyc))
+            + smoothing
+        )
+        for plat, cyc in zip(platforms, cycles)
     ]
     total = sum(scores)
     return [score / total for score in scores]
@@ -207,35 +224,14 @@ def run_default_election(
     population_pos: PositionVector,
     platforms: list[PositionVector],
     rng: Optional[random.Random] = None,
+    incumbent_cycles: Optional[list[int]] = None,
 ) -> int:
     """Sample a winning index from the inverse-distance probability distribution."""
     rng = rng or random.Random()
-    probs = compute_probabilities(population_pos, platforms)
+    probs = compute_probabilities(
+        population_pos, platforms, incumbent_cycles=incumbent_cycles
+    )
     return rng.choices(range(len(platforms)), weights=probs, k=1)[0]
-
-
-def average_vectors(vectors: list[PositionVector]) -> PositionVector:
-    """Compute the element-wise arithmetic mean of non-empty position vectors."""
-    dim = len(vectors[0])
-    count = len(vectors)
-    return [sum(vec[k] for vec in vectors) / count for k in range(dim)]
-
-
-def compute_backlash_position(
-    population_pos: PositionVector, status_quo: PositionVector
-) -> PositionVector:
-    """Shift population 0.01 away from status quo on each issue within [0.01, 0.99]."""
-    updated: PositionVector = []
-    for pop_val, sq_val in zip(population_pos, status_quo):
-        if pop_val > sq_val:
-            candidate = round(pop_val + BACKLASH_SHIFT, 2)
-            updated.append(candidate if candidate <= MAX_POS else pop_val)
-        elif pop_val < sq_val:
-            candidate = round(pop_val - BACKLASH_SHIFT, 2)
-            updated.append(candidate if candidate >= MIN_POS else pop_val)
-        else:
-            updated.append(pop_val)
-    return updated
 
 
 def is_election_cycle(tier: int, cycle: int, wave: int = 0) -> bool:
@@ -327,21 +323,20 @@ def allocate_batch_votes(
 
 
 def simulate_district_batch(
-    district_probs: list[float], rng: Optional[random.Random] = None
+    district_probs: list[float],
+    rng: Optional[random.Random] = None,
+    kappa: float = DIRICHLET_KAPPA,
 ) -> list[float]:
-    """Run Steps 2-4 of live voting for one district batch and return normalized shares."""
+    """Sample one district batch share vector from Dirichlet(kappa * district_probs)."""
     rng = rng or random.Random()
-    p_count = len(district_probs)
-    low = SLICE_MIN_FACTOR / p_count
-    high = SLICE_MAX_FACTOR / p_count
-
-    slices = [rng.uniform(low, high) for _ in range(p_count)]
-    slice_sum = sum(slices)
-    norm_slices = [s / slice_sum for s in slices]
-
-    weighted = [sl * pr for sl, pr in zip(norm_slices, district_probs)]
-    weight_sum = sum(weighted)
-    return [w / weight_sum for w in weighted]
+    gammas = [
+        rng.gammavariate(kappa * pr, 1.0) if pr > 0.0 else 0.0
+        for pr in district_probs
+    ]
+    total = sum(gammas)
+    if total <= 0.0:
+        return [1.0 / len(district_probs)] * len(district_probs)
+    return [g / total for g in gammas]
 
 
 def precompute_race_probabilities(race: LiveRaceSpec) -> np.ndarray:
@@ -351,7 +346,16 @@ def precompute_race_probabilities(race: LiveRaceSpec) -> np.ndarray:
     # Shape: (D, P, I) -> Euclidean distances (D, P)
     diff = dist_positions[:, None, :] - cand_platforms[None, :, :]
     dists = np.sqrt(np.sum(diff * diff, axis=2))
-    scores = 1.0 / (dists + SMOOTHING_TERM)
+
+    grudge = np.ones(len(race.candidates), dtype=np.float64)
+    if race.incumbent_party is not None and race.incumbent_cycles > 0:
+        factor = GRUDGE_BASE ** race.incumbent_cycles
+        for idx, cand in enumerate(race.candidates):
+            if cand.party_index == race.incumbent_party:
+                grudge[idx] = factor
+
+    effective_dists = dists * grudge[None, :]
+    scores = 1.0 / np.sqrt(effective_dists + SMOOTHING_TERM)
     return scores / scores.sum(axis=1, keepdims=True)
 
 
@@ -360,18 +364,26 @@ def simulate_live_batch(
     prob_matrix: Optional[np.ndarray] = None,
     rng: Optional[random.Random] = None,
     np_rng: Optional[np.random.Generator] = None,
+    kappa: float = DIRICHLET_KAPPA,
 ) -> list[int]:
     """Simulate one 1000-vote batch per district for a race and return per-candidate votes."""
     p_count = len(race.candidates)
     if len(race.districts) == 1 and rng is not None:
-        probs = (
-            prob_matrix[0].tolist()
-            if prob_matrix is not None
-            else compute_probabilities(
-                race.districts[0].position, [c.platform for c in race.candidates]
+        if prob_matrix is not None:
+            probs = prob_matrix[0].tolist()
+        else:
+            inc_cycles = [
+                race.incumbent_cycles
+                if (race.incumbent_party is not None and c.party_index == race.incumbent_party)
+                else 0
+                for c in race.candidates
+            ]
+            probs = compute_probabilities(
+                race.districts[0].position,
+                [c.platform for c in race.candidates],
+                incumbent_cycles=inc_cycles,
             )
-        )
-        shares = simulate_district_batch(probs, rng=rng)
+        shares = simulate_district_batch(probs, rng=rng, kappa=kappa)
         return allocate_batch_votes(shares, VOTES_PER_BATCH)
 
     if prob_matrix is None:
@@ -383,15 +395,15 @@ def simulate_live_batch(
         else:
             np_rng = np.random.default_rng()
 
-    num_districts = prob_matrix.shape[0]
-    slices = np_rng.uniform(
-        SLICE_MIN_FACTOR / p_count,
-        SLICE_MAX_FACTOR / p_count,
-        size=(num_districts, p_count),
+    alphas = prob_matrix * kappa
+    gammas = np.where(
+        alphas > 0.0,
+        np_rng.gamma(np.maximum(alphas, 1e-12), 1.0),
+        0.0,
     )
-    slices /= slices.sum(axis=1, keepdims=True)
-    weighted = slices * prob_matrix
-    shares = weighted / weighted.sum(axis=1, keepdims=True)
+    row_sums = gammas.sum(axis=1, keepdims=True)
+    safe_sums = np.where(row_sums > 0.0, row_sums, 1.0)
+    shares = np.where(row_sums > 0.0, gammas / safe_sums, 1.0 / p_count)
 
     # Vectorized largest-remainder allocation per district row
     exact = shares * VOTES_PER_BATCH
@@ -420,121 +432,3 @@ def compute_rcv_percentages(
         party_idx: (votes / total) * rounds * 100.0
         for party_idx, votes in candidate_votes.items()
     }
-
-
-def apply_default_oscillation(
-    nation: Nation,
-    home_state: int,
-    home_city: int,
-    home_district: int,
-    include_city_council_all: bool = False,
-) -> None:
-    """Apply Natural Party Preference Oscillation ahead of the next cycle (default mode)."""
-    parties = nation.parties
-    if nation.president_party is not None:
-        nation.position = compute_backlash_position(
-            nation.position, parties[nation.president_party].platform
-        )
-
-    for state in nation.states:
-        if state.governor_party is not None and all(
-            sp is not None for sp in state.senator_parties
-        ):
-            sq = average_vectors(
-                [parties[state.governor_party].platform]
-                + [parties[sp].platform for sp in state.senator_parties if sp is not None]
-            )
-            state.position = compute_backlash_position(state.position, sq)
-
-    # Home state cities (only home_city is tracked in default mode for city-level, or all 10 if needed)
-    for city in nation.states[home_state].cities:
-        if city.mayor_party is not None and city.house_party is not None:
-            sq = average_vectors(
-                [parties[city.mayor_party].platform, parties[city.house_party].platform]
-            )
-            city.position = compute_backlash_position(city.position, sq)
-
-    # Tracked districts in home city
-    target_city = nation.states[home_state].cities[home_city]
-    districts_to_shift = (
-        target_city.districts
-        if include_city_council_all
-        else [target_city.districts[home_district]]
-    )
-    for dist in districts_to_shift:
-        if dist.state_leg_party is not None and dist.city_council_party is not None:
-            sq = average_vectors(
-                [
-                    parties[dist.state_leg_party].platform,
-                    parties[dist.city_council_party].platform,
-                ]
-            )
-            dist.position = compute_backlash_position(dist.position, sq)
-
-
-def apply_live_cycle_oscillation(
-    nation: Nation,
-    home_state: int,
-    home_city: int,
-    home_district: int,
-    live_tiers: set[int],
-    district_incumbents_tracked: bool = True,
-) -> None:
-    """Apply oscillation after a gameplay cycle: live tiers only oscillate at district level."""
-    parties = nation.parties
-
-    if TIER_PRESIDENT not in live_tiers and nation.president_party is not None:
-        nation.position = compute_backlash_position(
-            nation.position, parties[nation.president_party].platform
-        )
-
-    if TIER_GOVERNOR not in live_tiers:
-        for state in nation.states:
-            if TIER_SENATOR in live_tiers and state.index == home_state:
-                continue
-            if state.governor_party is not None and all(
-                sp is not None for sp in state.senator_parties
-            ):
-                sq = average_vectors(
-                    [parties[state.governor_party].platform]
-                    + [
-                        parties[sp].platform
-                        for sp in state.senator_parties
-                        if sp is not None
-                    ]
-                )
-                state.position = compute_backlash_position(state.position, sq)
-
-    if TIER_HOUSE not in live_tiers and TIER_MAYOR not in live_tiers:
-        for city in nation.states[home_state].cities:
-            if city.mayor_party is not None and city.house_party is not None:
-                sq = average_vectors(
-                    [
-                        parties[city.mayor_party].platform,
-                        parties[city.house_party].platform,
-                    ]
-                )
-                city.position = compute_backlash_position(city.position, sq)
-
-    # Districts with tracked district incumbents always oscillate on district status quo
-    if district_incumbents_tracked:
-        target_city = nation.states[home_state].cities[home_city]
-        for dist in target_city.districts:
-            if dist.state_leg_party is not None and dist.city_council_party is not None:
-                sq = average_vectors(
-                    [
-                        parties[dist.state_leg_party].platform,
-                        parties[dist.city_council_party].platform,
-                    ]
-                )
-                dist.position = compute_backlash_position(dist.position, sq)
-    else:
-        dist = nation.states[home_state].cities[home_city].districts[home_district]
-        if dist.state_leg_party is not None and dist.city_council_party is not None:
-            sq = average_vectors(
-                [
-                    parties[dist.state_leg_party].platform,
-                    parties[dist.city_council_party].platform,
-                ]
-            )
-            dist.position = compute_backlash_position(dist.position, sq)

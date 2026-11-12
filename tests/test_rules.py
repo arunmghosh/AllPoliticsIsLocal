@@ -156,7 +156,7 @@ class TestRules(unittest.TestCase):
         def fake_live(races, parties, player_party, input_fn, output_fn=print, **kwargs):
             return {r.seat_key: (0, 60.0) for r in races}, []
 
-        def fake_default(pop_pos, platforms, rng=None):
+        def fake_default(pop_pos, platforms, rng=None, **kwargs):
             return 0  # Party 0 holds State Leg & Mayor forever so no vacancy opens
 
         with tempfile.TemporaryDirectory() as tmp:

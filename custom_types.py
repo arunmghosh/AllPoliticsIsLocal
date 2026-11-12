@@ -36,6 +36,7 @@ class Candidate:
     seniority: int = 0
     victory_size: float = 0.0
     is_player: bool = False
+    cycles_in_office: int = 0
 
 
 @dataclass
@@ -123,6 +124,8 @@ class LiveRaceSpec:
     districts: list[District]
     candidates: list[Candidate]
     has_player: bool = False
+    incumbent_party: Optional[int] = None
+    incumbent_cycles: int = 0
 
 
 @dataclass

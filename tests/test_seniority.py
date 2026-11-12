@@ -24,7 +24,7 @@ from data_tracker import (
     read_seniority_data,
     run_historical_simulation,
 )
-from simulator import build_nation
+from simulator import build_nation, platform_matches_party
 
 
 class TestSeniority(unittest.TestCase):
@@ -279,6 +279,202 @@ class TestSeniority(unittest.TestCase):
 
             # Quiet Gov was not up -> seniority 4 + 2 = 6
             self.assertEqual(tracker.roster[gov2_key].seniority, 6)
+
+    def test_losing_opponents_redraw_platforms_while_winners_keep_theirs(self):
+        rng = random.Random(404)
+        nation = build_nation(
+            "OppPlatformNation",
+            ["Economy", "Social"],
+            load_party_names(),
+            rng=rng,
+        )
+        player = PlayerProfile(
+            name="Player OppCheck",
+            home_state=0,
+            home_city=0,
+            home_district=0,
+            party_index=0,
+            platform=[0.25, 0.25],
+            current_tier=TIER_CITY_COUNCIL,
+            current_seat=(TIER_CITY_COUNCIL, (0, 0, 0)),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = SeniorityTracker(filepath=os.path.join(tmp, "seniority.xlsx"))
+            nm = NameManager(
+                load_in_party_names(),
+                load_out_party_names(),
+                player_name=player.name,
+                rng=rng,
+            )
+
+            assignments, _ = tracker.resolve_cycle_assignments(1, nation, player)
+            races = tracker.build_live_races(
+                TIER_CITY_COUNCIL, 1, nation, player, assignments, nm, rng=rng
+            )
+
+            seat_a = (TIER_CITY_COUNCIL, (0, 0, 0))  # Player party (0) wins
+            seat_b = (TIER_CITY_COUNCIL, (0, 0, 1))  # Opposing party (2) wins
+
+            # Snapshot names and set distinct initial platforms for deterministic verification
+            names_a = {
+                p: cand.name for p, cand in tracker.opponent_cache[seat_a].items()
+            }
+            names_b = {
+                p: cand.name for p, cand in tracker.opponent_cache[seat_b].items()
+            }
+            for p, cand in tracker.opponent_cache[seat_a].items():
+                cand.platform = [
+                    0.01 if nation.parties[p].platform[0] < 0.5 else 0.99,
+                    0.01 if nation.parties[p].platform[1] < 0.5 else 0.99,
+                ]
+            for p, cand in tracker.opponent_cache[seat_b].items():
+                cand.platform = [
+                    0.02 if nation.parties[p].platform[0] < 0.5 else 0.98,
+                    0.02 if nation.parties[p].platform[1] < 0.5 else 0.98,
+                ]
+
+            before_a = {
+                p: list(cand.platform)
+                for p, cand in tracker.opponent_cache[seat_a].items()
+            }
+            before_b = {
+                p: list(cand.platform)
+                for p, cand in tracker.opponent_cache[seat_b].items()
+            }
+
+            # Add an off-cycle cached seat that is NOT in outcomes
+            off_cycle_seat = (TIER_GOVERNOR, (0,))
+            off_cand = Candidate(
+                name="Off Cycle Opp",
+                party_index=1,
+                platform=[0.11, 0.88],
+                tier=TIER_GOVERNOR,
+                seat_id=off_cycle_seat,
+            )
+            tracker.opponent_cache[off_cycle_seat] = {1: off_cand}
+
+            outcomes = {r.seat_key: (0, 55.0) for r in races}
+            outcomes[seat_a] = (0, 62.0)  # Player's party wins seat_a -> opponents 1,2,3 lose
+            outcomes[seat_b] = (2, 58.0)  # Opposing party 2 wins seat_b -> 2 keeps, 1 & 3 lose
+
+            tracker.apply_cycle_outcomes(
+                cycle=1,
+                nation=nation,
+                player=player,
+                assignments=assignments,
+                outcomes=outcomes,
+                name_manager=nm,
+                rng=random.Random(909),
+            )
+
+            # Seat A: all opposing candidates lost -> names preserved, platforms redrawn within party bounds
+            for p in (1, 2, 3):
+                cand = tracker.opponent_cache[seat_a][p]
+                self.assertEqual(cand.name, names_a[p])
+                self.assertTrue(
+                    platform_matches_party(cand.platform, nation.parties[p].platform)
+                )
+                self.assertNotEqual(cand.platform, before_a[p])
+
+            # Seat B: winning opposing party 2 kept platform; losing parties 1 & 3 redrawn
+            self.assertEqual(tracker.opponent_cache[seat_b][2].name, names_b[2])
+            self.assertEqual(tracker.opponent_cache[seat_b][2].platform, before_b[2])
+            for p in (1, 3):
+                cand = tracker.opponent_cache[seat_b][p]
+                self.assertEqual(cand.name, names_b[p])
+                self.assertTrue(
+                    platform_matches_party(cand.platform, nation.parties[p].platform)
+                )
+                self.assertNotEqual(cand.platform, before_b[p])
+
+            # Off-cycle seat not in outcomes remains untouched
+            self.assertEqual(
+                tracker.opponent_cache[off_cycle_seat][1].platform, [0.11, 0.88]
+            )
+
+    def test_grudge_cycles_in_office_tracking_across_live_races(self):
+        rng = random.Random(505)
+        nation = build_nation("GrudgeNation", ["Economy"], load_party_names(), rng=rng)
+        player = PlayerProfile(
+            name="Grudge Player",
+            home_state=0,
+            home_city=0,
+            home_district=0,
+            party_index=0,
+            platform=[0.25],
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = SeniorityTracker(filepath=os.path.join(tmp, "seniority.xlsx"))
+            nm = NameManager(
+                load_in_party_names(),
+                load_out_party_names(),
+                player_name=player.name,
+                rng=rng,
+            )
+
+            # Cycle 1: City Council seats vacant -> incumbent_cycles == 0
+            a1, _ = tracker.resolve_cycle_assignments(1, nation, player)
+            races1 = tracker.build_live_races(
+                TIER_CITY_COUNCIL, 1, nation, player, a1, nm, rng=rng
+            )
+            race_dist0 = next(r for r in races1 if r.seat_key == (TIER_CITY_COUNCIL, (0, 0, 0)))
+            race_dist1 = next(r for r in races1 if r.seat_key == (TIER_CITY_COUNCIL, (0, 0, 1)))
+            self.assertIsNone(race_dist0.incumbent_party)
+            self.assertEqual(race_dist0.incumbent_cycles, 0)
+
+            outcomes1 = {r.seat_key: (0, 55.0) for r in races1}
+            outcomes1[race_dist1.seat_key] = (1, 56.0)
+            tracker.apply_cycle_outcomes(1, nation, player, a1, outcomes1, nm, rng=rng)
+
+            # Player won dist 0 -> 1 cycle; Party 1 won dist 1 -> 1 cycle
+            self.assertEqual(tracker.roster[race_dist0.seat_key].cycles_in_office, 1)
+            self.assertEqual(tracker.seat_streaks[race_dist1.seat_key], (1, 1))
+
+            # Cycle 2: Populate higher tiers so player is not promoted and runs for City Council reelection
+            tracker.roster[(TIER_GOVERNOR, (0,))] = Candidate(
+                name="Gov 0", party_index=0, platform=[0.25], tier=TIER_GOVERNOR,
+                seat_id=(TIER_GOVERNOR, (0,)), seniority=4, cycles_in_office=2,
+            )
+            for w in range(3):
+                tracker.roster[(TIER_SENATOR, (0, w))] = Candidate(
+                    name=f"Sen {w}", party_index=0, platform=[0.25], tier=TIER_SENATOR,
+                    seat_id=(TIER_SENATOR, (0, w)), seniority=4, cycles_in_office=2,
+                )
+            for c in range(10):
+                tracker.roster[(TIER_HOUSE, (0, c))] = Candidate(
+                    name=f"House {c}", party_index=0, platform=[0.25], tier=TIER_HOUSE,
+                    seat_id=(TIER_HOUSE, (0, c)), seniority=4, cycles_in_office=2,
+                )
+            sl0 = (TIER_STATE_LEG, (0, 0, 0))
+            tracker.roster[sl0] = Candidate(
+                name="Sitting Leg",
+                party_index=0,
+                platform=[0.25],
+                tier=TIER_STATE_LEG,
+                seat_id=sl0,
+                seniority=2,
+                cycles_in_office=1,
+            )
+            a2, p2_assign = tracker.resolve_cycle_assignments(2, nation, player)
+            self.assertEqual(p2_assign.seat_key, race_dist0.seat_key)
+            self.assertTrue(p2_assign.is_reelection)
+            races2 = tracker.build_live_races(
+                TIER_CITY_COUNCIL, 2, nation, player, a2, nm, rng=rng
+            )
+            race2_dist0 = next(r for r in races2 if r.seat_key == race_dist0.seat_key)
+            race2_dist1 = next(r for r in races2 if r.seat_key == race_dist1.seat_key)
+
+            self.assertEqual(race2_dist0.incumbent_party, 0)
+            self.assertEqual(race2_dist0.incumbent_cycles, 1)
+            self.assertEqual(race2_dist1.incumbent_party, 1)
+            self.assertEqual(race2_dist1.incumbent_cycles, 1)
+
+            # Win again in Cycle 2 -> consecutive cycles increments to 2
+            tracker.apply_cycle_outcomes(2, nation, player, a2, outcomes1, nm, rng=rng)
+            self.assertEqual(tracker.roster[race_dist0.seat_key].cycles_in_office, 2)
+            self.assertEqual(tracker.seat_streaks[race_dist1.seat_key], (1, 2))
 
 
 if __name__ == "__main__":

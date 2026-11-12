@@ -7,6 +7,8 @@ from constants import (
     CITIES_PER_STATE,
     CONSERVATIVE_PLATFORM,
     DISTRICTS_PER_CITY,
+    KAPPA_CITY,
+    KAPPA_STATE,
     LIBERAL_PLATFORM,
     MAX_POS,
     MID_POS,
@@ -15,7 +17,7 @@ from constants import (
     SENATORS_PER_STATE,
 )
 from data_tracker import load_party_names
-from simulator import build_nation, build_parties
+from simulator import build_nation, build_parties, sample_beta_position
 
 
 class TestConstruction(unittest.TestCase):
@@ -83,10 +85,13 @@ class TestConstruction(unittest.TestCase):
         self.assertEqual(total_districts, 20000)
         self.assertEqual(wave_counts, {0: 17, 1: 17, 2: 16})
 
-    def test_triangular_inheritance_clusters_around_parent(self):
+    def test_beta_inheritance_clusters_around_parent(self):
+        self.assertEqual(KAPPA_STATE, 4)
+        self.assertEqual(KAPPA_CITY, 10)
+
         rng = random.Random(99)
         party_names = load_party_names()
-        nation = build_nation("TriNation", ["Issue 1"], party_names, rng=rng)
+        nation = build_nation("BetaNation", ["Issue 1"], party_names, rng=rng)
 
         conservative_states = [s for s in nation.states if s.position[0] <= 0.15]
         liberal_states = [s for s in nation.states if s.position[0] >= 0.85]
@@ -99,8 +104,17 @@ class TestConstruction(unittest.TestCase):
             c.position[0] for s in liberal_states for c in s.cities
         ) / (len(liberal_states) * CITIES_PER_STATE)
 
-        self.assertLess(cons_city_mean, 0.45)
-        self.assertGreater(lib_city_mean, 0.55)
+        self.assertLess(cons_city_mean, 0.30)
+        self.assertGreater(lib_city_mean, 0.70)
+
+        # Verify empirical Beta(kappa * mu, kappa * (1 - mu)) mean and variance
+        for mu, kappa in ((0.20, KAPPA_STATE), (0.50, KAPPA_STATE), (0.80, KAPPA_CITY)):
+            draws = [sample_beta_position(mu, kappa, rng=rng) for _ in range(1500)]
+            sample_mean = sum(draws) / len(draws)
+            sample_var = sum((x - sample_mean) ** 2 for x in draws) / len(draws)
+            expected_var = mu * (1.0 - mu) / (kappa + 1.0)
+            self.assertAlmostEqual(sample_mean, mu, delta=0.02)
+            self.assertAlmostEqual(sample_var, expected_var, delta=0.006)
 
     def _assert_valid_vector(self, vec: list[float], expected_len: int) -> None:
         self.assertEqual(len(vec), expected_len)

@@ -25,7 +25,6 @@ from constants import (
     SENIORITY_FILE,
     SUGGESTED_ISSUES,
     TIER_PRESIDENT,
-    TIER_STATE_LEG,
     WAVE_LABELS,
     YEARS_PER_CYCLE,
 )
@@ -51,7 +50,6 @@ from data_tracker import (
 )
 from reporter import report_historical_summary, run_live_elections
 from simulator import (
-    apply_live_cycle_oscillation,
     build_nation,
     find_party_for_platform,
     format_seat_label,
@@ -491,11 +489,24 @@ def run_single_game(
         )
 
         default_outcomes: dict = {}
-        for sk in assignments:
+        num_parties = len(nation.parties)
+        for sk, assignment in assignments.items():
             if sk in live_outcomes:
                 continue
             pop_pos = get_seat_population_position(nation, sk)
-            winner = run_default_election(pop_pos, party_platforms, rng=rng)
+            inc_party, inc_cycles_val = seniority_tracker.get_incumbent_grudge(
+                sk, assignment, player.party_index
+            )
+            inc_cycles = [
+                inc_cycles_val if (p == inc_party and inc_cycles_val > 0) else 0
+                for p in range(num_parties)
+            ]
+            winner = run_default_election(
+                pop_pos,
+                party_platforms,
+                rng=rng,
+                incumbent_cycles=inc_cycles,
+            )
             default_outcomes[sk] = (winner, 0.0)
 
         all_outcomes = {**default_outcomes, **live_outcomes}
@@ -537,19 +548,6 @@ def run_single_game(
             )
             outcome = "won"
             break
-
-        live_tiers = {live_tier} if live_races else set()
-        district_tracked = (
-            player.current_tier is None or player.current_tier >= TIER_STATE_LEG
-        )
-        apply_live_cycle_oscillation(
-            nation=nation,
-            home_state=home_state,
-            home_city=home_city,
-            home_district=home_district,
-            live_tiers=live_tiers,
-            district_incumbents_tracked=district_tracked,
-        )
     else:
         output_fn(
             f"\nTIME LIMIT REACHED: {CAREER_MAX_CYCLES} cycles ({CAREER_MAX_CYCLES * YEARS_PER_CYCLE} years) "

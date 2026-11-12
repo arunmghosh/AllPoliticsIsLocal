@@ -212,28 +212,36 @@ AllPoliticsIsLocal/
 
 ## 3. Installation & Usage
 ### Prerequisites
-The project requires Python (TODO: add version) with the following packages:
-- TODO: Add packages
+The project requires **Python 3.9+** (tested on Python 3.14) with the following third-party packages:
+- `numpy` — vectorized multi-district live election batch simulation
+- `openpyxl` — creating, updating, and reading `data/historical_data.xlsx` and `data/seniority.xlsx`
 
-Install dependencies via pip:
+### Installation
+Navigate to the project root and install dependencies via `pip`:
 ```bash
-pip install (TODO: add packages)
+pip3 install numpy openpyxl
 ```
+*(No additional build step is required; all candidate and party name lists are already stored in `names/`.)*
 
 ### Running the Simulator
-Run the interactive runner:
+Start the interactive CLI simulation from the project root:
 ```bash
 python3 runner.py
 ```
+During a session, spreadsheets are written to `data/` (`historical_data.xlsx` and `seniority.xlsx`). At the end of a game, you can choose to save those spreadsheets to a timestamped folder inside `results/` or discard them; either choice clears `data/` for the next run.
 
 ### Global Hotkeys (Usable at Any Prompt)
-- **`Q` or `q`**: Cleanly quit the game at any prompt, wipes data subfolder.
-- **`R` or `r`**: Cleanly restart the game at any prompt, wipes data subfolder.
+- **`Q` or `q`**: Cleanly quit the game at any prompt, wipes `data/` subfolder.
+- **`R` or `r`**: Cleanly restart the game at any prompt, wipes `data/` subfolder.
 
 ### Running Automated Tests
 Run all unit, mathematical, pipeline, smoke, and file export tests:
 ```bash
 python3 -m unittest discover tests
+```
+For verbose per-test output:
+```bash
+python3 -m unittest discover tests -v
 ```
 
 ## 4. Personal Experiments / High Scores (Coming Soon)
