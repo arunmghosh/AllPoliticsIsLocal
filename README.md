@@ -30,7 +30,7 @@ Here is the scope and term length for each position:
 - Mayors & House Members: Elected by a city, 4 year term
 - State Legislators & City Council Members: Elected by a district, 2 year term
 
-A president can only serve one term, but there no term limits imposed on other positions. 
+A president can only serve one term, governors and mayors can only serve two terms, and every other position has a term limit of three. 
 
 #### Representation of Politics
 Politics is represented by a set of issues, with each have an ideology spectrum represented by the interval (0,1). Specifically, the numbers can range from 0.01 to 0.99 in increments of 0.01. Low numbers mean a conservative position on the issue, while high numbers mean a liberal position. You have the option to choose up to 3 issues to use for the simulation. Those issues can be custom or chosen from a list of suggestions. 
@@ -106,7 +106,12 @@ The flow of events that occur between an election victory and running for the ne
 1. Suppose you won an election for tier T in cycle C 
 2. In cycle C + 1, your party finds V vacancies for tier T + 1
 3. If you are one of the V most senior politicians at tier T, you are assigned to run for one of those vacancies
-4. If you are not selected to run, check if you are up for reelection
+4. If you are not selected to run, you may decide to issue a primary challenge for the candidate in your party assigned to run for the position at tier T + 1
+5. If you are up for re-election, you have to vacate your seat to issue the primary challenge, and a defeat in the primary means you lose the game
+6. If you are not up for re-election, you can keep your tier T position if you lose the primary or general election for tier T + 1 and still be in the game
+7. If you decide not to issue a primary challenge, you either run for re-election if you are due for it, or watch other elections (see 'Election Night Live: What You See' below)
+
+Primary elections are always reported live. Only you and your party manager have the capability to launch primary challenges in this simulation. Thus, in the primary phase, you and your direct opponent are the only ones involved in an election. Every time you issue a primary challenge, you are defying your party manager, so they will punish you with a primary challenge in the next cycle that you are in an election (whatever that cycle / election may be). You can't issue multiple primary challenges in a row (you have to survive a primary challenge issued against you before you can issue a new one). 
 
 #### Naming Candidates In Your Party
 At the time of your first election, the following politicians are assigned a name from "in_party.txt" if they are in your party:
@@ -136,7 +141,9 @@ The default election simulation mode is the mode outlined for generating histori
 | State Legislator | State Legislature Elections In Your City |
 | City Council | City Council Elections In Your City |
 
-If you are running for an office in a given cycle, that election will always be reported to you live. For all elections reported to you live, every candidate in it has a name, drawn from the appropriate text file if they don't already have one. No duplicate names are allowed. Since opposing candidates also run for a fixed office for simplicity, draw fresh names for your opponents every time you level up, but use the same names if you are running for reelection or watching the same set of elections. Names within your party are recyclable (with the suffix 2, 3, etc if it is drawn that many times). Name drawings are not random. The names are shuffled once at the beginning of the game, and then drawn in order (pointers keep track of where you left off). When you draw all the names in "in_party.txt", loop back to the beginning and increment the suffix. There should be plenty of names for the opponents, so you will never need to recycle. 
+If you are running for an office in a given cycle, that election will always be reported to you live. For all elections reported to you live, every candidate in it has a name, drawn from the appropriate text file if they don't already have one. No duplicate names are allowed. Since opposing candidates also run for a fixed office for simplicity, draw fresh names for your opponents every time you level up, but use the same names if you are running for reelection or watching the same set of elections. The only time opponent names are recycled is if the reach a term limit (in which case, add or increment a suffix, like 2, 3, etc). 
+
+Names within your party are recyclable (with the suffix 2, 3, etc if it is drawn that many times). Name drawings are not random. The names are shuffled once at the beginning of the game, and then drawn in order (pointers keep track of where you left off). When you draw all the names in "in_party.txt", loop back to the beginning and increment the suffix.  
 
 When you watch election results on election night, you don't get the full result at once. You see votes trickle in until a winner is able to be called. To simulate this, live elections are done in 10 batches of 1000 votes each at the district level (sum results from districts to get results for higher offices). Here is the process for getting the live vote counts: 
 
@@ -163,10 +170,11 @@ Every cycle, "seniority.xlsx" has to be updated. Candidates who lost their elect
 Here is the general workflow for each cycle:
 
 1. Determine vacancies, review seniority to see if you are eligible to advance (if not, determine if you are up for reelection or not)
-2. If you are running for a higher office or for reelection, you have a chance to tweak your platform within the party bounds
-3. Voting (whether or not you are running, you see live returns from select races specified in 'Election Night Live: What You See')
-4. If you lost an election, you lose the game
-5. If you won or weren't up for an election, update seniority
+2. Decide to issue a primary challenge if applicable
+3. If you are running for a higher office or for reelection, you have a chance to tweak your platform within the party bounds
+4. Voting (whether or not you are running, you see live returns from select races specified in 'Election Night Live: What You See')
+5. If you lost an election, you lose the game
+6. If you won or weren't up for an election, update seniority
 
 The game has a 25-cycle (50-year) time limit from when you start. Cycle 1 is the first year of the historical data, and you can simulate all way through Cycle 50 before you start. Suppose you start at Cycle 51. The ultimate objective is to be elected president in Cycle 75 or earlier. If you lose any election, you lose the game. If you are not elected president by the end of Cycle 75, you also lose. This is why it's important that you pick a path (district, city, state) with similar position vectors. You can't change your party once you set your positions, so you want those population position vectors to be within your party range. Lastly, the average of the entire nation is close to 0.5 for each position, so you want to pick moderate positions to maximize your chances of winning that race. Once you finish the game, you have the option to save the results or discard them. If you choose to save the results, the contents of the data subfolder are moved to into the results subfolder, into a subfolder of results with a date/time stamp. The data subfolder is always wiped clean to prepare for the next game. 
 
@@ -258,6 +266,12 @@ I made the following adjustments to address the bugs I found in the initial run:
 - Fixed noise cancellation and incorrect distribution mean for initial generation of population position vectors by sampling the population position vectors from Beta distributions (see 'Creation of Position Vectors' above)
 - Changed the mechanism for backlash against incumbents to be a multiplier to an incumbent's Euclidean distance to a population position vector (1.06^C, where C is the number of consecutive cycles the incumbent has been in office)
 - All of those fixes made it less likely for incumbents to win re-election, and thus fixed the seniority backlog, making it much easier to advance to higher office
+
+#### Bugfixing (Round 2)
+Even with the fixes, I still observed a bottleneck in seniority, so I added two additional mechanisms to ensure the user doesn't get stuck in one position:
+
+1. Term limits for every position (1 for president, 2 for governors and mayors, 3 for everyone else)
+2. The option of issuing a primary challenge if you are not selected to advance
 
 ### b) 4-Party Game
 ### c) 8-Party Game
