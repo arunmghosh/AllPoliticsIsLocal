@@ -540,7 +540,10 @@ class SeniorityTracker:
         """Populate initial in-party officeholders from historical data and write seniority.xlsx."""
         rng = rng or random.Random()
         self.roster.clear()
-        self.seat_streaks = dict(streaks)
+        self.seat_streaks = {
+            sk: (sp, min(sc, get_max_cycles_for_tier(sk[0])))
+            for sk, (sp, sc) in streaks.items()
+        }
         party_platform = nation.parties[player_party].platform
 
         # Exclude City Council in home city (vacant at start)
@@ -584,6 +587,12 @@ class SeniorityTracker:
                     else 0
                 )
 
+            max_years = get_max_cycles_for_tier(sk[0]) * YEARS_PER_CYCLE
+            seniority_years = min(seniority_years, max_years)
+            cycles_in_office = min(
+                seniority_years // YEARS_PER_CYCLE, get_max_cycles_for_tier(sk[0])
+            )
+
             name = name_manager.draw_in_party_name(self.active_names())
             plat = sample_candidate_platform(party_platform, rng=rng)
             self.roster[sk] = Candidate(
@@ -595,7 +604,7 @@ class SeniorityTracker:
                 seniority=seniority_years,
                 victory_size=0.0,
                 is_player=False,
-                cycles_in_office=seniority_years // YEARS_PER_CYCLE,
+                cycles_in_office=cycles_in_office,
             )
 
         self.save()

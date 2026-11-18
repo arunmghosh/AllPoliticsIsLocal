@@ -15,7 +15,7 @@ from custom_types import (
     Party,
     SeatKey,
 )
-from simulator import compute_rcv_percentages, precompute_race_probabilities, simulate_live_batch
+from simulator import compute_vote_percentages, precompute_race_probabilities, simulate_live_batch
 
 
 def report_historical_summary(
@@ -70,10 +70,11 @@ def format_batch_report(
     races: list[LiveRaceSpec],
     parties: list[Party],
     player_party: int,
+    title: str = "ELECTION NIGHT LIVE",
 ) -> str:
     """Format a live election batch report string."""
     lines: list[str] = [
-        f"\n=== ELECTION NIGHT LIVE: Batch {batch_result.batch_num}/{batch_result.total_batches} ==="
+        f"\n=== {title}: Batch {batch_result.batch_num}/{batch_result.total_batches} ==="
     ]
     race_by_key = {race.seat_key: race for race in races}
     show_all_details = len(races) <= 3
@@ -119,7 +120,10 @@ def format_batch_report(
                 runner_cand = cand_by_party[runner]
                 runner_pct = snap.candidate_shares[runner]
                 summary += f" | {runner_cand.name} ({parties[runner].name}) {runner_pct:.2f}%"
-            if player_party not in (leader, sorted_parties[1] if len(sorted_parties) > 1 else -1):
+            if (
+                player_party in cand_by_party
+                and player_party not in (leader, sorted_parties[1] if len(sorted_parties) > 1 else -1)
+            ):
                 in_cand = cand_by_party[player_party]
                 summary += f" | {in_cand.name} ({parties[player_party].name}) {snap.candidate_shares[player_party]:.2f}%"
             lines.append(summary)
@@ -131,16 +135,17 @@ def format_final_results(
     final_batch: LiveBatchResult,
     races: list[LiveRaceSpec],
     parties: list[Party],
+    title: str = "FINAL CALLED ELECTION RESULTS",
 ) -> str:
-    """Format final called winners after all 10 live batches complete."""
-    lines = ["\n=== FINAL CALLED ELECTION RESULTS ==="]
+    """Format final called winners after all live batches complete."""
+    lines = [f"\n=== {title} ==="]
     race_by_key = {race.seat_key: race for race in races}
     for snap in final_batch.race_snapshots:
         race = race_by_key[snap.seat_key]
         cand_by_party = {c.party_index: c for c in race.candidates}
         winner = cand_by_party[snap.leader_party]
         win_pct = snap.candidate_shares[snap.leader_party]
-        tag = " [YOUR RACE]" if snap.has_player else ""
+        tag = " [YOUR RACE]" if (snap.has_player or race.has_player) else ""
         lines.append(
             f"  {snap.label}{tag}: {winner.name} ({parties[snap.leader_party].name}) WINS with {win_pct:.2f}%"
         )
@@ -156,7 +161,7 @@ def run_live_elections(
     rng: Optional[random.Random] = None,
     np_rng: Optional[np.random.Generator] = None,
 ) -> tuple[dict[SeatKey, tuple[int, float]], list[LiveBatchResult]]:
-    """Run 10 batches of 1000 votes/district, reporting and prompting per batch."""
+    """Run 10 batches of 1000 votes/district. If leader < 50%, top 2 advance to runoff."""
     if not races:
         output_fn("\nNo elections in your live scope this cycle.")
         return {}, []
@@ -166,9 +171,9 @@ def run_live_elections(
         race.seat_key: {cand.party_index: 0 for cand in race.candidates}
         for race in races
     }
-    num_parties = len(parties)
     batch_results: list[LiveBatchResult] = []
 
+    # Round 1: 10 batches
     for batch_num in range(1, LIVE_BATCHES + 1):
         snapshots: list[LiveRaceSnapshot] = []
         for race, prob_mat in zip(races, prob_matrices):
@@ -179,7 +184,7 @@ def run_live_elections(
             for cand, count in zip(race.candidates, batch_counts):
                 race_totals[cand.party_index] += count
 
-            rcv_shares = compute_rcv_percentages(race_totals, num_parties)
+            actual_shares = compute_vote_percentages(race_totals)
             leader_party = max(
                 race_totals.keys(),
                 key=lambda p: (race_totals[p], -p),
@@ -194,7 +199,7 @@ def run_live_elections(
                     votes_reported=batch_num * (VOTES_PER_DISTRICT // LIVE_BATCHES) * num_dist,
                     total_votes=VOTES_PER_DISTRICT * num_dist,
                     candidate_votes=dict(race_totals),
-                    candidate_shares=rcv_shares,
+                    candidate_shares=actual_shares,
                     leader_party=leader_party,
                 )
             )
@@ -210,16 +215,174 @@ def run_live_elections(
             f"\nBatch {batch_num}/{LIVE_BATCHES} complete. Press Enter to continue (Q=quit, R=restart): "
         )
 
-    final_batch = batch_results[-1]
-    output_fn(format_final_results(final_batch, races, parties))
+    round1_final_batch = batch_results[-1]
 
-    outcomes: dict[SeatKey, tuple[int, float]] = {}
-    for snap in final_batch.race_snapshots:
-        outcomes[snap.seat_key] = (
+    # Evaluate Round 1 results: check which races require a runoff
+    decided_outcomes: dict[SeatKey, tuple[int, float]] = {}
+    runoff_specs: list[LiveRaceSpec] = []
+    runoff_top_two: dict[SeatKey, list[Candidate]] = {}
+
+    for race in races:
+        race_totals = cumulative_votes[race.seat_key]
+        total_votes = sum(race_totals.values())
+        sorted_cands = sorted(
+            race.candidates,
+            key=lambda c: (race_totals[c.party_index], -c.party_index),
+            reverse=True,
+        )
+        leader = sorted_cands[0]
+        leader_pct = (
+            (race_totals[leader.party_index] / total_votes) * 100.0
+            if total_votes > 0
+            else 0.0
+        )
+
+        if len(race.candidates) <= 2 or leader_pct >= 50.0:
+            decided_outcomes[race.seat_key] = (leader.party_index, leader_pct)
+        else:
+            top_two = [sorted_cands[0], sorted_cands[1]]
+            runoff_top_two[race.seat_key] = top_two
+            runoff_specs.append(
+                LiveRaceSpec(
+                    seat_key=race.seat_key,
+                    tier=race.tier,
+                    label=race.label,
+                    districts=race.districts,
+                    candidates=top_two,
+                    has_player=any(c.is_player for c in top_two),
+                    incumbent_party=race.incumbent_party,
+                    incumbent_cycles=race.incumbent_cycles,
+                )
+            )
+
+    if not runoff_specs:
+        output_fn(format_final_results(round1_final_batch, races, parties))
+        return decided_outcomes, batch_results
+
+    # Announce Round 1 outcomes
+    output_fn("\n=== ROUND 1 ELECTION RESULTS ===")
+    race_by_key = {r.seat_key: r for r in races}
+    for snap in round1_final_batch.race_snapshots:
+        race = race_by_key[snap.seat_key]
+        cand_by_party = {c.party_index: c for c in race.candidates}
+        tag = " [YOUR RACE]" if snap.has_player else ""
+        if snap.seat_key in decided_outcomes:
+            winner_party, win_pct = decided_outcomes[snap.seat_key]
+            winner = cand_by_party[winner_party]
+            output_fn(
+                f"  {snap.label}{tag}: {winner.name} ({parties[winner_party].name}) WINS outright with {win_pct:.2f}%"
+            )
+        else:
+            top_two = runoff_top_two[snap.seat_key]
+            c1, c2 = top_two[0], top_two[1]
+            pct1 = snap.candidate_shares[c1.party_index]
+            pct2 = snap.candidate_shares[c2.party_index]
+            output_fn(
+                f"  {snap.label}{tag}: No candidate reached 50%. RUNOFF: "
+                f"{c1.name} ({parties[c1.party_index].name}) {pct1:.2f}% vs. "
+                f"{c2.name} ({parties[c2.party_index].name}) {pct2:.2f}%"
+            )
+
+    input_fn(
+        f"\nRound 1 complete. Press Enter for Runoff Batch 1/{LIVE_BATCHES} (Q=quit, R=restart): "
+    )
+
+    # Runoff round: 10 batches for the top 2 in each advancing race
+    runoff_prob_matrices = [precompute_race_probabilities(r) for r in runoff_specs]
+    runoff_cumulative_votes: dict[SeatKey, dict[int, int]] = {
+        r.seat_key: {c.party_index: 0 for c in r.candidates}
+        for r in runoff_specs
+    }
+
+    runoff_final_batch: Optional[LiveBatchResult] = None
+    for batch_num in range(1, LIVE_BATCHES + 1):
+        runoff_snapshots: list[LiveRaceSnapshot] = []
+        for r_spec, r_prob_mat in zip(runoff_specs, runoff_prob_matrices):
+            batch_counts = simulate_live_batch(
+                r_spec, prob_matrix=r_prob_mat, rng=rng, np_rng=np_rng
+            )
+            r_totals = runoff_cumulative_votes[r_spec.seat_key]
+            for cand, count in zip(r_spec.candidates, batch_counts):
+                r_totals[cand.party_index] += count
+
+            actual_shares = compute_vote_percentages(r_totals)
+            leader_party = max(
+                r_totals.keys(),
+                key=lambda p: (r_totals[p], -p),
+            )
+            num_dist = len(r_spec.districts)
+            runoff_snapshots.append(
+                LiveRaceSnapshot(
+                    seat_key=r_spec.seat_key,
+                    tier=r_spec.tier,
+                    label=r_spec.label,
+                    has_player=r_spec.has_player,
+                    votes_reported=batch_num * (VOTES_PER_DISTRICT // LIVE_BATCHES) * num_dist,
+                    total_votes=VOTES_PER_DISTRICT * num_dist,
+                    candidate_votes=dict(r_totals),
+                    candidate_shares=actual_shares,
+                    leader_party=leader_party,
+                )
+            )
+
+        runoff_batch_result = LiveBatchResult(
+            batch_num=batch_num,
+            total_batches=LIVE_BATCHES,
+            race_snapshots=runoff_snapshots,
+        )
+        batch_results.append(runoff_batch_result)
+        runoff_final_batch = runoff_batch_result
+        output_fn(
+            format_batch_report(
+                runoff_batch_result,
+                runoff_specs,
+                parties,
+                player_party,
+                title="RUNOFF ELECTION NIGHT LIVE",
+            )
+        )
+        input_fn(
+            f"\nRunoff Batch {batch_num}/{LIVE_BATCHES} complete. Press Enter to continue (Q=quit, R=restart): "
+        )
+
+    assert runoff_final_batch is not None
+    for snap in runoff_final_batch.race_snapshots:
+        decided_outcomes[snap.seat_key] = (
             snap.leader_party,
             snap.candidate_shares[snap.leader_party],
         )
-    return outcomes, batch_results
+
+    # Combine final snapshots for all races into one final report
+    runoff_final_by_key = {s.seat_key: s for s in runoff_final_batch.race_snapshots}
+    round1_final_by_key = {s.seat_key: s for s in round1_final_batch.race_snapshots}
+    combined_final_snaps: list[LiveRaceSnapshot] = []
+    for race in races:
+        if race.seat_key in runoff_final_by_key:
+            snap = runoff_final_by_key[race.seat_key]
+            combined_final_snaps.append(
+                LiveRaceSnapshot(
+                    seat_key=race.seat_key,
+                    tier=race.tier,
+                    label=race.label,
+                    has_player=race.has_player,
+                    votes_reported=snap.votes_reported,
+                    total_votes=snap.total_votes,
+                    candidate_votes=snap.candidate_votes,
+                    candidate_shares=snap.candidate_shares,
+                    leader_party=snap.leader_party,
+                )
+            )
+        else:
+            combined_final_snaps.append(round1_final_by_key[race.seat_key])
+
+    final_batch = LiveBatchResult(
+        batch_num=LIVE_BATCHES,
+        total_batches=LIVE_BATCHES,
+        race_snapshots=combined_final_snaps,
+    )
+    output_fn(format_final_results(final_batch, races, parties))
+
+    return decided_outcomes, batch_results
 
 
 def run_live_primary_race(

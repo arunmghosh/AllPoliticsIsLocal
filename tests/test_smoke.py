@@ -43,7 +43,7 @@ class TestSmoke(unittest.TestCase):
                 return "n"
             if "primary challenge" in low:
                 return "n"
-            if "batch " in low:
+            if "batch " in low or "runoff" in low:
                 return ""
             if "save the simulation spreadsheets" in low:
                 return "y"
@@ -125,7 +125,7 @@ class TestSmoke(unittest.TestCase):
                 return ""
             if "primary challenge" in low:
                 return "n"
-            if "batch " in low:
+            if "batch " in low or "runoff" in low:
                 return ""
             if "save the simulation spreadsheets" in low:
                 return "n"

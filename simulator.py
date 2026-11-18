@@ -420,15 +420,21 @@ def simulate_live_batch(
     return [int(v) for v in totals]
 
 
-def compute_rcv_percentages(
-    candidate_votes: dict[int, int], num_parties: int
+def compute_vote_percentages(
+    candidate_votes: dict[int, int],
 ) -> dict[int, float]:
-    """Convert cumulative vote counts into RCV-adjusted percentages (winner >= 50%)."""
+    """Convert cumulative vote counts into actual vote percentages (summing to 100%)."""
     total = sum(candidate_votes.values())
     if total <= 0:
         return {p: 0.0 for p in candidate_votes}
-    rounds = num_voting_rounds(num_parties)
     return {
-        party_idx: (votes / total) * rounds * 100.0
+        party_idx: (votes / total) * 100.0
         for party_idx, votes in candidate_votes.items()
     }
+
+
+def compute_rcv_percentages(
+    candidate_votes: dict[int, int], num_parties: int = 2
+) -> dict[int, float]:
+    """Compute vote percentages (alias for backwards compatibility)."""
+    return compute_vote_percentages(candidate_votes)

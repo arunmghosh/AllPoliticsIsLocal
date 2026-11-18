@@ -13,11 +13,13 @@ from constants import (
     TIER_PRESIDENT,
     TIER_SENATOR,
     TIER_STATE_LEG,
+    YEARS_PER_CYCLE,
 )
 from custom_types import Candidate, PlayerProfile
 from data_tracker import (
     NameManager,
     SeniorityTracker,
+    get_max_cycles_for_tier,
     load_in_party_names,
     load_out_party_names,
     load_party_names,
@@ -70,8 +72,10 @@ class TestSeniority(unittest.TestCase):
                 self.assertEqual(r["Victory Size"], 0)
                 self.assertIn(r["Level of Office"], (1, 2, 3, 4, 5, 6))
                 self.assertGreaterEqual(r["Seniority"], 2)
+                max_years = get_max_cycles_for_tier(r["Level of Office"]) * YEARS_PER_CYCLE
+                self.assertLessEqual(r["Seniority"], max_years)
 
-            # Verify President seniority matches consecutive ending rows in historical_data
+            # Verify President seniority matches consecutive ending rows in historical_data, capped at term limit
             pres_key = (TIER_PRESIDENT, ())
             if nation.president_party == 0:
                 expected_streak = 0
@@ -80,7 +84,52 @@ class TestSeniority(unittest.TestCase):
                         expected_streak += 1
                     else:
                         break
-                self.assertEqual(tracker.roster[pres_key].seniority, expected_streak * 2)
+                expected_years = min(
+                    expected_streak * YEARS_PER_CYCLE,
+                    get_max_cycles_for_tier(TIER_PRESIDENT) * YEARS_PER_CYCLE,
+                )
+                self.assertEqual(tracker.roster[pres_key].seniority, expected_years)
+
+    def test_seniority_capped_at_term_limit_after_50_historical_cycles(self):
+        """Verify that starting seniority values never exceed the term limit years."""
+        rng = random.Random(777)
+        nation = build_nation("TermCapNation", ["Economy"], load_party_names(), rng=rng)
+        with tempfile.TemporaryDirectory() as tmp:
+            hist_path = os.path.join(tmp, "historical_data.xlsx")
+            sen_path = os.path.join(tmp, "seniority.xlsx")
+            rows, streaks = run_historical_simulation(
+                nation,
+                home_state=0,
+                home_city=0,
+                home_district=0,
+                num_cycles=50,
+                filepath=hist_path,
+                rng=rng,
+            )
+            nm = NameManager(
+                load_in_party_names(), load_out_party_names(), player_name="CapTester", rng=rng
+            )
+            tracker = SeniorityTracker(filepath=sen_path)
+            tracker.initialize_starting_roster(
+                nation=nation,
+                home_state=0,
+                home_city=0,
+                player_party=0,
+                name_manager=nm,
+                historical_rows=rows,
+                streaks=streaks,
+                rng=rng,
+            )
+            saved_rows = read_seniority_data(sen_path)
+            self.assertGreater(len(saved_rows), 0)
+            for r in saved_rows:
+                tier = r["Level of Office"]
+                max_allowed = get_max_cycles_for_tier(tier) * YEARS_PER_CYCLE
+                self.assertLessEqual(
+                    r["Seniority"],
+                    max_allowed,
+                    f"Seniority {r['Seniority']} exceeds max {max_allowed} for tier {tier}",
+                )
 
     def test_tiebreaker_by_victory_size_and_fallback_to_lower_tier(self):
         rng = random.Random(202)

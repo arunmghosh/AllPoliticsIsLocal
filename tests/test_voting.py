@@ -24,6 +24,7 @@ from simulator import (
     build_nation,
     compute_probabilities,
     compute_rcv_percentages,
+    compute_vote_percentages,
     num_voting_rounds,
     precompute_race_probabilities,
     simulate_district_batch,
@@ -147,9 +148,35 @@ class TestVoting(unittest.TestCase):
                         totals[c.party_index] += v
 
                 self.assertEqual(sum(totals.values()), VOTES_PER_DISTRICT * len(districts))
-                rcv_pcts = compute_rcv_percentages(totals, num_parties)
-                winner_pct = max(rcv_pcts.values())
-                self.assertGreaterEqual(winner_pct, 50.0 - 1e-9)
+                vote_pcts = compute_vote_percentages(totals)
+                self.assertAlmostEqual(sum(vote_pcts.values()), 100.0, places=5)
+                round1_leader = max(vote_pcts.keys(), key=lambda p: vote_pcts[p])
+                round1_leader_pct = vote_pcts[round1_leader]
+
+                if num_parties == 2 or round1_leader_pct >= 50.0:
+                    self.assertGreaterEqual(round1_leader_pct, 50.0 - 1e-9)
+                else:
+                    # In multi-party elections where leader < 50%, top 2 advance to runoff
+                    sorted_p = sorted(vote_pcts.keys(), key=lambda p: vote_pcts[p], reverse=True)
+                    top_two_cands = [c for c in candidates if c.party_index in (sorted_p[0], sorted_p[1])]
+                    runoff_race = LiveRaceSpec(
+                        seat_key=(TIER_CITY_COUNCIL, (0, 0, 0)),
+                        tier=TIER_CITY_COUNCIL,
+                        label="Runoff Race",
+                        districts=districts,
+                        candidates=top_two_cands,
+                    )
+                    runoff_prob_mat = precompute_race_probabilities(runoff_race)
+                    runoff_totals = {c.party_index: 0 for c in top_two_cands}
+                    for _ in range(LIVE_BATCHES):
+                        r_batch = simulate_live_batch(
+                            runoff_race, prob_matrix=runoff_prob_mat, rng=rng, np_rng=np_rng
+                        )
+                        for c, v in zip(top_two_cands, r_batch):
+                            runoff_totals[c.party_index] += v
+                    runoff_pcts = compute_vote_percentages(runoff_totals)
+                    self.assertAlmostEqual(sum(runoff_pcts.values()), 100.0, places=5)
+                    self.assertGreaterEqual(max(runoff_pcts.values()), 50.0 - 1e-9)
 
     def test_dirichlet_batch_distribution_and_vote_allocation_helpers(self):
         self.assertEqual(DIRICHLET_KAPPA, 20.0)

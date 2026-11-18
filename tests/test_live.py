@@ -113,14 +113,17 @@ class TestLive(unittest.TestCase):
                 np_rng=np_rng,
             )
 
-            self.assertEqual(len(batches), LIVE_BATCHES)
-            self.assertEqual(len(prompts), LIVE_BATCHES)
+            # In 4-party race where leader < 50%, top 2 advance to runoff (10 R1 + 10 Runoff batches)
+            self.assertEqual(len(batches), LIVE_BATCHES * 2)
+            self.assertEqual(len(prompts), LIVE_BATCHES * 2 + 1)
             self.assertEqual(len(outcomes), 40)
 
-            # Check incremental reporting from 10% to 100%
+            # Check incremental reporting from 10% to 100% and runoff announcements
             joined = "\n".join(outputs)
             self.assertIn("Batch 1/10", joined)
             self.assertIn("Batch 10/10", joined)
+            self.assertIn("ROUND 1 ELECTION RESULTS", joined)
+            self.assertIn("RUNOFF", joined)
             self.assertIn("FINAL CALLED ELECTION RESULTS", joined)
             self.assertIn("[YOUR RACE]", joined)
 
@@ -129,6 +132,48 @@ class TestLive(unittest.TestCase):
             self.assertEqual(final_snap.votes_reported, VOTES_PER_DISTRICT)
             self.assertEqual(sum(final_snap.candidate_votes.values()), VOTES_PER_DISTRICT)
             self.assertGreaterEqual(outcomes[final_snap.seat_key][1], 50.0 - 1e-9)
+
+    def test_two_party_live_election_no_runoff(self):
+        """In a 2-party election, winner is decided in Round 1 (no runoff needed)."""
+        rng = random.Random(42)
+        np_rng = np.random.default_rng(42)
+        nation = build_nation("TwoPartyLive", ["Economy"], load_party_names(), rng=rng)
+        player = PlayerProfile("Player2P", 0, 0, 0, 0, [0.25])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = SeniorityTracker(filepath=os.path.join(tmp, "seniority.xlsx"))
+            nm = NameManager(
+                load_in_party_names(),
+                load_out_party_names(),
+                player_name=player.name,
+                rng=rng,
+            )
+            assignments, _ = tracker.resolve_cycle_assignments(1, nation, player)
+            races = tracker.build_live_races(
+                TIER_CITY_COUNCIL, 1, nation, player, assignments, nm, rng=rng
+            )
+            prompts: list[str] = []
+            outputs: list[str] = []
+
+            outcomes, batches = run_live_elections(
+                races=races[:2],
+                parties=nation.parties,
+                player_party=0,
+                input_fn=lambda msg: prompts.append(msg) or "",
+                output_fn=outputs.append,
+                rng=rng,
+                np_rng=np_rng,
+            )
+
+            self.assertEqual(len(batches), LIVE_BATCHES)
+            self.assertEqual(len(prompts), LIVE_BATCHES)
+            self.assertEqual(len(outcomes), 2)
+            for sk, (win_p, win_pct) in outcomes.items():
+                self.assertGreaterEqual(win_pct, 50.0 - 1e-9)
+
+            joined = "\n".join(outputs)
+            self.assertNotIn("ROUND 1 ELECTION RESULTS", joined)
+            self.assertIn("FINAL CALLED ELECTION RESULTS", joined)
 
     def test_empty_live_races_and_batch_hotkey_quit(self):
         rng = random.Random(9)
