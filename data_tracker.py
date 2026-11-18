@@ -452,39 +452,32 @@ def get_max_cycles_for_tier(tier: int) -> int:
 def get_higher_office_seat(
     player: PlayerProfile, cycle: int, nation: Nation
 ) -> Optional[SeatKey]:
-    """Return the SeatKey of the office one tier above player holding an election in cycle."""
+    """Return the SeatKey of the lowest higher office above player holding an election in cycle."""
     if player.current_tier is None or player.current_tier <= TIER_PRESIDENT:
         return None
-    higher_tier = player.current_tier - 1
-    if higher_tier == TIER_PRESIDENT:
-        return (TIER_PRESIDENT, ()) if is_election_cycle(higher_tier, cycle) else None
-    if higher_tier == TIER_GOVERNOR:
-        st = nation.states[player.home_state]
-        return (
-            (TIER_GOVERNOR, (player.home_state,))
-            if is_election_cycle(higher_tier, cycle, st.wave)
-            else None
-        )
-    if higher_tier == TIER_SENATOR:
-        sen_wave = (cycle - 1) % SENATORS_PER_STATE
-        return (TIER_SENATOR, (player.home_state, sen_wave))
-    if higher_tier == TIER_HOUSE:
-        return (
-            (TIER_HOUSE, (player.home_state, player.home_city))
-            if is_election_cycle(higher_tier, cycle)
-            else None
-        )
-    if higher_tier == TIER_MAYOR:
-        return (
-            (TIER_MAYOR, (player.home_state, player.home_city))
-            if is_election_cycle(higher_tier, cycle)
-            else None
-        )
-    if higher_tier == TIER_STATE_LEG:
-        return (
-            TIER_STATE_LEG,
-            (player.home_state, player.home_city, player.home_district),
-        )
+    for higher_tier in range(player.current_tier - 1, TIER_PRESIDENT - 1, -1):
+        if higher_tier == TIER_PRESIDENT:
+            if is_election_cycle(higher_tier, cycle):
+                return (TIER_PRESIDENT, ())
+        elif higher_tier == TIER_GOVERNOR:
+            st = nation.states[player.home_state]
+            if is_election_cycle(higher_tier, cycle, st.wave):
+                return (TIER_GOVERNOR, (player.home_state,))
+        elif higher_tier == TIER_SENATOR:
+            sen_wave = (cycle - 1) % SENATORS_PER_STATE
+            return (TIER_SENATOR, (player.home_state, sen_wave))
+        elif higher_tier == TIER_HOUSE:
+            if is_election_cycle(higher_tier, cycle):
+                return (TIER_HOUSE, (player.home_state, player.home_city))
+        elif higher_tier == TIER_MAYOR:
+            if is_election_cycle(higher_tier, cycle):
+                return (TIER_MAYOR, (player.home_state, player.home_city))
+        elif higher_tier == TIER_STATE_LEG:
+            if is_election_cycle(higher_tier, cycle):
+                return (
+                    TIER_STATE_LEG,
+                    (player.home_state, player.home_city, player.home_district),
+                )
     return None
 
 
@@ -497,6 +490,22 @@ def is_player_up_for_reelection(
     tier = player.current_tier
     wave = get_seat_wave(player.current_seat, nation)
     return is_election_cycle(tier, cycle, wave)
+
+
+def player_has_served_complete_term(
+    player: PlayerProfile,
+    cycle: int,
+    cand: Optional[Candidate] = None,
+) -> bool:
+    """Return True if player has served at least one complete term in their current office."""
+    if player.current_tier is None:
+        return True
+    req_cycles = TERM_LENGTH_CYCLES.get(player.current_tier, 1)
+    if cand is not None and get_candidate_cycles(cand) >= req_cycles:
+        return True
+    if player.elected_cycle is not None:
+        return (cycle - player.elected_cycle) >= req_cycles
+    return True
 
 
 class SeniorityTracker:
@@ -650,16 +659,21 @@ class SeniorityTracker:
         dest_tier: int,
         dest_coords: tuple[int, ...],
         strict_lower_tier_only: bool = False,
+        cycle: Optional[int] = None,
+        player: Optional[PlayerProfile] = None,
     ) -> Optional[Candidate]:
         """Find and remove the most senior eligible candidate from lower tiers."""
         start_tier = dest_tier + 1
         end_tier = start_tier if strict_lower_tier_only else TIER_CITY_COUNCIL
         for src_tier in range(start_tier, end_tier + 1):
-            pool = [
-                cand
-                for sk, cand in self.roster.items()
-                if sk[0] == src_tier and _seat_matches_scope(sk, dest_tier, dest_coords)
-            ]
+            pool = []
+            for sk, cand in self.roster.items():
+                if sk[0] != src_tier or not _seat_matches_scope(sk, dest_tier, dest_coords):
+                    continue
+                if cand.is_player and player is not None and cycle is not None:
+                    if not player_has_served_complete_term(player, cycle, cand):
+                        continue
+                pool.append(cand)
             if pool:
                 pool.sort(
                     key=lambda c: (c.seniority, c.victory_size, 1 if c.is_player else 0),
@@ -679,6 +693,13 @@ class SeniorityTracker:
         player: PlayerProfile,
     ) -> tuple[dict[SeatKey, ElectionAssignment], Optional[ElectionAssignment]]:
         """Resolve all vacancies and nominations top-down (Tier 1 -> Tier 7) for cycle."""
+        # Ensure player only exists at player.current_seat in self.roster
+        if player.current_seat is not None:
+            for sk, cand in list(self.roster.items()):
+                if sk != player.current_seat and (cand.is_player or cand.name == player.name):
+                    self.roster.pop(sk, None)
+                    self.seat_streaks.pop(sk, None)
+
         # Term-limit outgoing President when a Presidential election cycle starts
         if is_election_cycle(TIER_PRESIDENT, cycle):
             self.roster.pop((TIER_PRESIDENT, ()), None)
@@ -732,7 +753,7 @@ class SeniorityTracker:
                 selected_pool: list[Candidate] = []
                 for _ in vacant_seats:
                     chosen = self._pop_best_candidate(
-                        TIER_HOUSE, (player.home_state,)
+                        TIER_HOUSE, (player.home_state,), cycle=cycle, player=player
                     )
                     if chosen is None:
                         break
@@ -813,7 +834,11 @@ class SeniorityTracker:
                 strict = tier == TIER_STATE_LEG
                 chosen = (
                     self._pop_best_candidate(
-                        tier, sk[1], strict_lower_tier_only=strict
+                        tier,
+                        sk[1],
+                        strict_lower_tier_only=strict,
+                        cycle=cycle,
+                        player=player,
                     )
                     if tier < TIER_CITY_COUNCIL
                     else None
@@ -828,6 +853,13 @@ class SeniorityTracker:
                 assignments[sk] = assignment
                 if chosen is not None and chosen.is_player:
                     player_assignment = assignment
+
+        if player_assignment is not None and player.current_tier is not None:
+            # Player can never be assigned to run for an office lower than their current tier
+            if player_assignment.tier > player.current_tier:
+                player_assignment = None
+            elif player_assignment.is_promotion and not player_has_served_complete_term(player, cycle):
+                player_assignment = None
 
         return assignments, player_assignment
 
@@ -1051,9 +1083,18 @@ class SeniorityTracker:
                 self.roster[sk] = nominee
                 self.seat_streaks[sk] = (player_party, nominee.cycles_in_office)
                 if nominee.is_player:
+                    old_seat = player.current_seat
+                    if old_seat is not None and old_seat != sk:
+                        self.roster.pop(old_seat, None)
+                        self.seat_streaks.pop(old_seat, None)
+                    for r_sk, r_cand in list(self.roster.items()):
+                        if r_sk != sk and (r_cand.is_player or r_cand.name == player.name):
+                            self.roster.pop(r_sk, None)
+                            self.seat_streaks.pop(r_sk, None)
                     player.current_tier = sk[0]
                     player.current_seat = sk
-                    player.elected_cycle = cycle
+                    if old_seat != sk or player.elected_cycle is None:
+                        player.elected_cycle = cycle
             else:
                 # If an incumbent from player's party lost reelection, remove from roster
                 if sk in self.roster and self.roster[sk].party_index == player_party:

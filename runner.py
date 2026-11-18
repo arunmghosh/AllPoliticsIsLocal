@@ -51,6 +51,7 @@ from data_tracker import (
     load_in_party_names,
     load_out_party_names,
     load_party_names,
+    player_has_served_complete_term,
     run_historical_simulation,
     save_results,
     wipe_data,
@@ -486,11 +487,19 @@ def run_single_game(
         faced_retaliatory_primary = False
 
         higher_sk = get_higher_office_seat(player, cycle, nation)
+        has_completed_term = player_has_served_complete_term(
+            player,
+            cycle,
+            seniority_tracker.roster.get(player.current_seat)
+            if player.current_seat is not None
+            else None,
+        )
         can_issue_primary = (
             player.current_tier is not None
             and not player_was_promoted
             and not player.pending_party_challenge
             and higher_sk is not None
+            and has_completed_term
         )
         target_nominee = None
         if can_issue_primary and higher_sk is not None:
@@ -529,6 +538,16 @@ def run_single_game(
             if want_challenge:
                 issued_primary_challenge = True
                 player.pending_party_challenge = True
+                if has_stakes and player.current_seat is not None:
+                    seniority_tracker.roster.pop(player.current_seat, None)
+                    seniority_tracker.seat_streaks.pop(player.current_seat, None)
+                    if player.current_seat in assignments:
+                        old_assign = assignments[player.current_seat]
+                        if old_assign.candidate is not None and old_assign.candidate.is_player:
+                            old_assign.candidate = None
+                            old_assign.is_reelection = False
+                    player.current_seat = None
+                    player.current_tier = None
                 prompt_tweak_platform(prompt_fn, output_fn, nation, player)
                 player_cand = Candidate(
                     name=player.name,
@@ -594,6 +613,8 @@ def run_single_game(
         if (
             not issued_primary_challenge
             and player_assignment is not None
+            and player_assignment.candidate is not None
+            and player_assignment.candidate.is_player
             and player.pending_party_challenge
         ):
             faced_retaliatory_primary = True
@@ -644,8 +665,13 @@ def run_single_game(
                 break
 
         if player_assignment is None and is_term_limited:
+            tier_name = (
+                OFFICE_NAMES[player.current_tier]
+                if player.current_tier is not None
+                else "office"
+            )
             output_fn(
-                f"\nDEFEAT: You reached your term limit as {OFFICE_NAMES[player.current_tier]} "
+                f"\nDEFEAT: You reached your term limit as {tier_name} "
                 "and were not able to advance to higher office. Game Over!"
             )
             outcome = "lost_election"

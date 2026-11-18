@@ -629,6 +629,109 @@ class TestSeniority(unittest.TestCase):
             self.assertEqual(race2.incumbent_cycles, 0)
             self.assertEqual(tracker.seat_streaks[cc_key], (1, 0))
 
+    def test_get_higher_office_seat_walks_up_to_active_election(self):
+        rng = random.Random(701)
+        nation = build_nation("WalkNation", ["Economy"], load_party_names(), rng=rng)
+        player = PlayerProfile(
+            name="MayorWalk",
+            home_state=0,
+            home_city=0,
+            home_district=0,
+            party_index=0,
+            platform=[0.25],
+            current_tier=TIER_MAYOR,
+            current_seat=(TIER_MAYOR, (0, 0)),
+        )
+        from data_tracker import get_higher_office_seat
+
+        # In cycle 2 (even cycle): House has an election -> returns House
+        sk_even = get_higher_office_seat(player, 2, nation)
+        self.assertEqual(sk_even, (TIER_HOUSE, (0, 0)))
+
+        # In cycle 3 (odd cycle): House has NO election -> walks up to Senate (which has wave 2)
+        sk_odd = get_higher_office_seat(player, 3, nation)
+        self.assertEqual(sk_odd, (TIER_SENATOR, (0, 2)))
+
+    def test_promotion_purges_old_seat_and_prevents_lower_tier_assignment(self):
+        rng = random.Random(702)
+        nation = build_nation("PurgeNation", ["Economy"], load_party_names(), rng=rng)
+        player = PlayerProfile(
+            name="PromotedHero",
+            home_state=0,
+            home_city=0,
+            home_district=0,
+            party_index=0,
+            platform=[0.25],
+            current_tier=TIER_MAYOR,
+            current_seat=(TIER_MAYOR, (0, 0)),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            sen_path = os.path.join(tmp, "seniority.xlsx")
+            tracker = SeniorityTracker(filepath=sen_path)
+            nm = NameManager(
+                load_in_party_names(),
+                load_out_party_names(),
+                player_name=player.name,
+                rng=rng,
+            )
+
+            # Player starts as Mayor in roster
+            old_mayor_key = (TIER_MAYOR, (0, 0))
+            tracker.roster[old_mayor_key] = Candidate(
+                name=player.name,
+                party_index=0,
+                platform=[0.25],
+                tier=TIER_MAYOR,
+                seat_id=old_mayor_key,
+                seniority=2,
+                cycles_in_office=1,
+                is_player=True,
+            )
+
+            # Player wins Senate election in cycle 2
+            sen_key = (TIER_SENATOR, (0, 1))
+            sen_cand = Candidate(
+                name=player.name,
+                party_index=0,
+                platform=[0.25],
+                tier=TIER_SENATOR,
+                seat_id=sen_key,
+                seniority=0,
+                cycles_in_office=1,
+                is_player=True,
+            )
+            from custom_types import ElectionAssignment
+
+            assign_sen = ElectionAssignment(
+                seat_key=sen_key,
+                tier=TIER_SENATOR,
+                candidate=sen_cand,
+                is_promotion=True,
+                is_reelection=False,
+            )
+
+            # Apply outcomes: player wins Senate!
+            tracker.apply_cycle_outcomes(
+                cycle=2,
+                nation=nation,
+                player=player,
+                assignments={sen_key: assign_sen},
+                outcomes={sen_key: (0, 60.0)},
+                name_manager=nm,
+                rng=rng,
+            )
+
+            # Verify player's old Mayor seat was purged from roster
+            self.assertNotIn(old_mayor_key, tracker.roster)
+            self.assertIn(sen_key, tracker.roster)
+            self.assertEqual(player.current_tier, TIER_SENATOR)
+            self.assertEqual(player.current_seat, sen_key)
+
+            # In cycle 3: House vacancy exists, but player is sitting Senator
+            # resolve_cycle_assignments must NOT assign player to House or Mayor
+            assignments, p_assign = tracker.resolve_cycle_assignments(3, nation, player)
+            self.assertIsNone(p_assign)
+
 
 if __name__ == "__main__":
     unittest.main()
