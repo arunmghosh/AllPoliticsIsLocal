@@ -273,5 +273,8 @@ Even with the fixes, I still observed a bottleneck in seniority, so I added two 
 1. Term limits for every position (1 for president, 2 for governors and mayors, 3 for everyone else)
 2. The option of issuing a primary challenge if you are not selected to advance
 
+#### Cached Run (2026-11-17_21-39-05)
+I added a rule that you can't advance to the next tier until you've served at least one full term at your current tier. Combined with the above fixes, I was able to get through a run without any bugs. The result was that I made it all the way to Senator (name: Jane Carrington), and lost a primary challenge for my re-election. When I test the 4-party case, I will also test the election history feature. 
+
 ### b) 4-Party Game
 ### c) 8-Party Game
