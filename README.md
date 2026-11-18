@@ -149,7 +149,7 @@ When you watch election results on election night, you don't get the full result
 
 1. Compute a probability distribution over the candidates
 2. Get vote shares by sampling from a Dirichlet distribution using those probabilities
-3. Multiply each share by the number of rounds of voting (determined by the number of candidates
+3. If no candidate has at least 50% after all batches of voting are counted, the top two proceed to a runoff
 
 Let's walk through those steps in more detail. 
 
@@ -157,7 +157,7 @@ The first step is the same as in the default mode, except we create a probabilit
 
 Assume that there are P parties, so there are P candidates in every election. We want to sample from a Dirichlet distribution with P shape parameters. Each shape parameter is 20.0*(chance of a candidate being elected). The 20.0 is a scaling coefficient that allows for more variance in the vote share draws, and the chances of candidates being elected are taken directly from the probability distribution computed in step 1. 
 
-If there are only 2 parties, then the winner will have at least 50% of the vote. But this system also works for ranked-choice voting. This simulation doesn't actually do multiple rounds or have voters rank candidates. It simulates one round, gets the shares, and multiplies by the number of rounds so the winner is guaranteed to have at least 50%. This represents that over all rounds, at least 50% of voters chose that candidate for one of the rounds. The number of rounds R is determined by P, according to the function R(P) = floor(P/2).
+If there are only 2 parties, then the winner will have at least 50% of the vote. But this system does not work for ranked-choice voting. This simulation implements a runoff system where the top 2 in the first round of the election advance to a head-to-head contest, guaranteeing that one will get at least 50% in the end.
 
 Additionally, "historical_data.xlsx" will be updated with a new row for each cycle in which the user is playing the game. Races not monitored live will be simulated in the default way for speed. No races that are not monitored live or tracked in "historical_data.xlsx" will ever be simulated, which makes sense because people generally only care about elections in which they personally voted or those that get national press coverage. 
 
@@ -277,4 +277,7 @@ Even with the fixes, I still observed a bottleneck in seniority, so I added two 
 I added a rule that you can't advance to the next tier until you've served at least one full term at your current tier. Combined with the above fixes, I was able to get through a run without any bugs. The result was that I made it all the way to Senator (name: Jane Carrington), and lost a primary challenge for my re-election. When I test the 4-party case, I will also test the election history feature. 
 
 ### b) 4-Party Game
+#### Initial Run
+On my first trial of the 4-party case of the game (not cached), I found a bug in the ranked choice voting mechanism. The displayed percentage was twice the actual percentage, which allowed it to surpass 100%. Everything else, including the simulation of existing election data, seemed to run smoothly (though I need to take a closer look next time). To address the issue I found, I am replacing the ranked choice method with a runoff system where the top 2 in the first round advance to a head-to-head contest. This only applies to live elections, as historical elections are called via the probability distribution. 
+
 ### c) 8-Party Game
