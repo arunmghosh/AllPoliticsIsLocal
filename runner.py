@@ -24,11 +24,14 @@ from constants import (
     RESULTS_DIR,
     SENIORITY_FILE,
     SUGGESTED_ISSUES,
+    TERM_LENGTH_CYCLES,
+    TERM_LIMITS,
     TIER_PRESIDENT,
     WAVE_LABELS,
     YEARS_PER_CYCLE,
 )
 from custom_types import (
+    Candidate,
     Nation,
     PlayerProfile,
     PositionVector,
@@ -40,7 +43,11 @@ from data_tracker import (
     SeniorityTracker,
     append_historical_row,
     build_historical_row,
+    get_candidate_cycles,
+    get_higher_office_seat,
+    get_max_cycles_for_tier,
     get_seat_population_position,
+    is_player_up_for_reelection,
     load_in_party_names,
     load_out_party_names,
     load_party_names,
@@ -48,14 +55,20 @@ from data_tracker import (
     save_results,
     wipe_data,
 )
-from reporter import report_historical_summary, run_live_elections
+from reporter import (
+    report_historical_summary,
+    run_live_elections,
+    run_live_primary_race,
+)
 from simulator import (
     build_nation,
     find_party_for_platform,
     format_seat_label,
+    get_seat_districts,
     is_valid_candidate_coordinate,
     platform_matches_party,
     run_default_election,
+    sample_candidate_platform,
 )
 
 
@@ -119,10 +132,13 @@ def _prompt_yes_no(
     prompt_fn: Callable[[str], str],
     output_fn: Callable[[str], None],
     message: str,
+    default: Optional[bool] = None,
 ) -> bool:
-    """Prompt until y/yes or n/no is entered."""
+    """Prompt until y/yes or n/no is entered (or default on blank)."""
     while True:
-        raw = prompt_fn(message).lower()
+        raw = prompt_fn(message).strip().lower()
+        if not raw and default is not None:
+            return default
         if raw in ("y", "yes"):
             return True
         if raw in ("n", "no"):
@@ -444,23 +460,215 @@ def run_single_game(
             cycle=cycle, nation=nation, player=player
         )
 
-        if player_assignment is not None:
-            live_tier = player_assignment.tier
-            action_word = (
-                "advanced to run for"
-                if player_assignment.is_promotion
-                else (
-                    "running for reelection for"
-                    if player_assignment.is_reelection
-                    else "running for"
+        player_was_promoted = (
+            player_assignment is not None and player_assignment.is_promotion
+        )
+        is_term_limited = False
+        if player.current_tier is not None:
+            max_cyc = get_max_cycles_for_tier(player.current_tier)
+            cyc_count = 0
+            if player.current_seat in seniority_tracker.roster:
+                cyc_count = get_candidate_cycles(
+                    seniority_tracker.roster[player.current_seat]
                 )
+            elif player.current_seat in seniority_tracker.seat_streaks:
+                streak_p, streak_c = seniority_tracker.seat_streaks[player.current_seat]
+                if streak_p == player.party_index:
+                    cyc_count = streak_c
+            if cyc_count >= max_cyc:
+                is_term_limited = True
+
+        is_up_for_reelection = (
+            is_player_up_for_reelection(player, cycle, nation) or is_term_limited
+        )
+        player_in_general_no_stakes = False
+        issued_primary_challenge = False
+        faced_retaliatory_primary = False
+
+        higher_sk = get_higher_office_seat(player, cycle, nation)
+        can_issue_primary = (
+            player.current_tier is not None
+            and not player_was_promoted
+            and not player.pending_party_challenge
+            and higher_sk is not None
+        )
+        target_nominee = None
+        if can_issue_primary and higher_sk is not None:
+            higher_assign = assignments.get(higher_sk)
+            if higher_assign is not None and higher_assign.candidate is not None:
+                if not higher_assign.candidate.is_player:
+                    target_nominee = higher_assign.candidate
+                else:
+                    can_issue_primary = False
+            else:
+                can_issue_primary = False
+
+        if can_issue_primary and target_nominee is not None and higher_sk is not None:
+            has_stakes = is_up_for_reelection
+            output_fn(
+                f"\nYou were not selected to advance to {format_seat_label(higher_sk)}."
             )
             output_fn(
-                f"You are {action_word} {format_seat_label(player_assignment.seat_key)}!"
+                f"{target_nominee.name} is currently assigned by your party to run for this seat."
+            )
+            if has_stakes:
+                output_fn(
+                    "STAKES: You are up for re-election (or term-limited). If you challenge and lose, you will be eliminated from the game!"
+                )
+            else:
+                output_fn(
+                    "NO STAKES: You are not up for re-election this cycle. If you challenge and lose, you retain your current office."
+                )
+
+            want_challenge = _prompt_yes_no(
+                prompt_fn,
+                output_fn,
+                f"Would you like to issue a primary challenge against {target_nominee.name} for {format_seat_label(higher_sk)}? (y/n): ",
+                default=False,
+            )
+            if want_challenge:
+                issued_primary_challenge = True
+                player.pending_party_challenge = True
+                prompt_tweak_platform(prompt_fn, output_fn, nation, player)
+                player_cand = Candidate(
+                    name=player.name,
+                    party_index=player.party_index,
+                    platform=list(player.platform),
+                    tier=higher_sk[0],
+                    seat_id=higher_sk,
+                    seniority=0,
+                    victory_size=0.0,
+                    is_player=True,
+                )
+                winner_cand, win_pct = run_live_primary_race(
+                    seat_key=higher_sk,
+                    tier=higher_sk[0],
+                    label=format_seat_label(higher_sk),
+                    districts=get_seat_districts(higher_sk, nation),
+                    player_cand=player_cand,
+                    opponent_cand=target_nominee,
+                    party=nation.parties[player.party_index],
+                    input_fn=prompt_fn,
+                    output_fn=output_fn,
+                    rng=rng,
+                    np_rng=np_rng,
+                )
+                if winner_cand.is_player:
+                    output_fn(
+                        f"\nPRIMARY VICTORY: You defeated {target_nominee.name} with {win_pct:.2f}% of the vote! "
+                        f"You are now the nominee for {format_seat_label(higher_sk)}!"
+                    )
+                    higher_assign = assignments[higher_sk]
+                    higher_assign.candidate = player_cand
+                    higher_assign.is_promotion = True
+                    player_assignment = higher_assign
+                    player_in_general_no_stakes = not has_stakes
+                    if (
+                        has_stakes
+                        and player.current_seat is not None
+                        and player.current_seat in assignments
+                    ):
+                        old_assign = assignments[player.current_seat]
+                        if (
+                            old_assign.candidate is not None
+                            and old_assign.candidate.is_player
+                        ):
+                            old_assign.candidate = None
+                            old_assign.is_reelection = False
+                else:
+                    output_fn(
+                        f"\nPRIMARY DEFEAT: You were defeated by {target_nominee.name} with {win_pct:.2f}% of the vote."
+                    )
+                    if has_stakes:
+                        output_fn(
+                            f"\nDEFEAT: You lost the primary challenge while up for re-election. Game Over!"
+                        )
+                        outcome = "lost_election"
+                        break
+                    else:
+                        output_fn(
+                            f"\nYou retain your current office as {OFFICE_NAMES[player.current_tier]}. You will watch the general election."
+                        )
+                        player_assignment = None
+
+        if (
+            not issued_primary_challenge
+            and player_assignment is not None
+            and player.pending_party_challenge
+        ):
+            faced_retaliatory_primary = True
+            output_fn(f"\n=== RETALIATORY PRIMARY CHALLENGE ===")
+            output_fn(
+                f"Because you defied your party manager with a prior primary challenge, "
+                f"the party manager has entered a challenger against you for {format_seat_label(player_assignment.seat_key)}!"
+            )
+            chal_name = name_manager.draw_in_party_name(seniority_tracker.active_names())
+            chal_plat = sample_candidate_platform(
+                nation.parties[player.party_index].platform, rng=rng
+            )
+            chal_cand = Candidate(
+                name=chal_name,
+                party_index=player.party_index,
+                platform=chal_plat,
+                tier=player_assignment.tier,
+                seat_id=player_assignment.seat_key,
+                is_player=False,
             )
             prompt_tweak_platform(prompt_fn, output_fn, nation, player)
             if player_assignment.candidate is not None:
                 player_assignment.candidate.platform = list(player.platform)
+
+            winner_cand, win_pct = run_live_primary_race(
+                seat_key=player_assignment.seat_key,
+                tier=player_assignment.tier,
+                label=format_seat_label(player_assignment.seat_key),
+                districts=get_seat_districts(player_assignment.seat_key, nation),
+                player_cand=player_assignment.candidate,
+                opponent_cand=chal_cand,
+                party=nation.parties[player.party_index],
+                input_fn=prompt_fn,
+                output_fn=output_fn,
+                rng=rng,
+                np_rng=np_rng,
+            )
+            if winner_cand.is_player:
+                output_fn(
+                    f"\nPRIMARY VICTORY: You survived the retaliatory primary challenge against {chal_name} with {win_pct:.2f}%!"
+                )
+                player.pending_party_challenge = False
+            else:
+                output_fn(
+                    f"\nDEFEAT: You lost the primary challenge to {chal_name} ({win_pct:.2f}%). Game Over!"
+                )
+                outcome = "lost_election"
+                break
+
+        if player_assignment is None and is_term_limited:
+            output_fn(
+                f"\nDEFEAT: You reached your term limit as {OFFICE_NAMES[player.current_tier]} "
+                "and were not able to advance to higher office. Game Over!"
+            )
+            outcome = "lost_election"
+            break
+
+        if player_assignment is not None:
+            live_tier = player_assignment.tier
+            if not issued_primary_challenge and not faced_retaliatory_primary:
+                action_word = (
+                    "advanced to run for"
+                    if player_assignment.is_promotion
+                    else (
+                        "running for reelection for"
+                        if player_assignment.is_reelection
+                        else "running for"
+                    )
+                )
+                output_fn(
+                    f"You are {action_word} {format_seat_label(player_assignment.seat_key)}!"
+                )
+                prompt_tweak_platform(prompt_fn, output_fn, nation, player)
+                if player_assignment.candidate is not None:
+                    player_assignment.candidate.platform = list(player.platform)
         else:
             assert player.current_tier is not None
             live_tier = player.current_tier
@@ -517,7 +725,14 @@ def run_single_game(
         if player_assignment is not None:
             win_party, win_pct = all_outcomes[player_assignment.seat_key]
             if win_party != player.party_index:
-                player_lost = True
+                if player_in_general_no_stakes:
+                    output_fn(
+                        f"\nYou lost the general election for {format_seat_label(player_assignment.seat_key)} ({win_pct:.2f}%). "
+                        f"However, since you were not up for re-election as {OFFICE_NAMES[player.current_tier]}, you retain your current office!"
+                    )
+                    player_lost = False
+                else:
+                    player_lost = True
             elif player_assignment.tier == TIER_PRESIDENT:
                 player_won_presidency = True
 

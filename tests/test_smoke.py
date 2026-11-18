@@ -41,6 +41,8 @@ class TestSmoke(unittest.TestCase):
                 return "0.25"
             if "tweak your platform" in low:
                 return "n"
+            if "primary challenge" in low:
+                return "n"
             if "batch " in low:
                 return ""
             if "save the simulation spreadsheets" in low:
@@ -121,6 +123,8 @@ class TestSmoke(unittest.TestCase):
                 return "0.35"
             if "range 0.51-0.99" in low:
                 return ""
+            if "primary challenge" in low:
+                return "n"
             if "batch " in low:
                 return ""
             if "save the simulation spreadsheets" in low:

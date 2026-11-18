@@ -476,6 +476,159 @@ class TestSeniority(unittest.TestCase):
             self.assertEqual(tracker.roster[race_dist0.seat_key].cycles_in_office, 2)
             self.assertEqual(tracker.seat_streaks[race_dist1.seat_key], (1, 2))
 
+    def test_term_limits_enforced_across_all_tiers(self):
+        from constants import TERM_LIMITS, TERM_LENGTH_CYCLES
+        from data_tracker import get_max_cycles_for_tier
+
+        # Verify term limit definitions per spec
+        self.assertEqual(TERM_LIMITS[TIER_PRESIDENT], 1)
+        self.assertEqual(TERM_LIMITS[TIER_GOVERNOR], 2)
+        self.assertEqual(TERM_LIMITS[TIER_MAYOR], 2)
+        self.assertEqual(TERM_LIMITS[TIER_SENATOR], 3)
+        self.assertEqual(TERM_LIMITS[TIER_HOUSE], 3)
+        self.assertEqual(TERM_LIMITS[TIER_STATE_LEG], 3)
+        self.assertEqual(TERM_LIMITS[TIER_CITY_COUNCIL], 3)
+
+        # Verify max cycles per tier before term limit
+        self.assertEqual(get_max_cycles_for_tier(TIER_PRESIDENT), 4)
+        self.assertEqual(get_max_cycles_for_tier(TIER_GOVERNOR), 6)
+        self.assertEqual(get_max_cycles_for_tier(TIER_MAYOR), 4)
+        self.assertEqual(get_max_cycles_for_tier(TIER_SENATOR), 9)
+        self.assertEqual(get_max_cycles_for_tier(TIER_HOUSE), 6)
+        self.assertEqual(get_max_cycles_for_tier(TIER_STATE_LEG), 3)
+        self.assertEqual(get_max_cycles_for_tier(TIER_CITY_COUNCIL), 3)
+
+        rng = random.Random(505)
+        nation = build_nation("TermLimitNation", ["Economy"], load_party_names(), rng=rng)
+        player = PlayerProfile(
+            name="TermPlayer",
+            home_state=0,
+            home_city=0,
+            home_district=0,
+            party_index=0,
+            platform=[0.25],
+            current_tier=TIER_CITY_COUNCIL,
+            current_seat=(TIER_CITY_COUNCIL, (0, 0, 0)),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sen_path = os.path.join(tmp, "seniority.xlsx")
+            tracker = SeniorityTracker(filepath=sen_path)
+
+            # Populate City Council candidates in home city:
+            # Player is at dist 0 with 3 cycles (term limit reached!)
+            cc_player_key = (TIER_CITY_COUNCIL, (0, 0, 0))
+            tracker.roster[cc_player_key] = Candidate(
+                name="TermPlayer", party_index=0, platform=[0.25],
+                tier=TIER_CITY_COUNCIL, seat_id=cc_player_key,
+                seniority=6, cycles_in_office=3, is_player=True,
+            )
+            # Council Max is at dist 1 with 3 cycles (term limit reached!)
+            cc_max_key = (TIER_CITY_COUNCIL, (0, 0, 1))
+            tracker.roster[cc_max_key] = Candidate(
+                name="Council Max", party_index=0, platform=[0.25],
+                tier=TIER_CITY_COUNCIL, seat_id=cc_max_key,
+                seniority=6, cycles_in_office=3,
+            )
+            # Council Ok is at dist 2 with 2 cycles (eligible for reelection!)
+            cc_ok_key = (TIER_CITY_COUNCIL, (0, 0, 2))
+            tracker.roster[cc_ok_key] = Candidate(
+                name="Council Ok", party_index=0, platform=[0.25],
+                tier=TIER_CITY_COUNCIL, seat_id=cc_ok_key,
+                seniority=4, cycles_in_office=2,
+            )
+
+            # Incumbents for higher tiers holding elections in Cycle 3
+            sen2_key = (TIER_SENATOR, (0, 2))
+            tracker.roster[sen2_key] = Candidate(
+                name="Sen Sitting", party_index=0, platform=[0.25],
+                tier=TIER_SENATOR, seat_id=sen2_key,
+                seniority=2, cycles_in_office=1,
+            )
+            m0_key = (TIER_MAYOR, (0, 0))
+            tracker.roster[m0_key] = Candidate(
+                name="Mayor Sitting", party_index=0, platform=[0.25],
+                tier=TIER_MAYOR, seat_id=m0_key,
+                seniority=2, cycles_in_office=1,
+            )
+            sl0_key = (TIER_STATE_LEG, (0, 0, 0))
+            tracker.roster[sl0_key] = Candidate(
+                name="Leg Sitting", party_index=0, platform=[0.25],
+                tier=TIER_STATE_LEG, seat_id=sl0_key,
+                seniority=2, cycles_in_office=1,
+            )
+            sl2_key = (TIER_STATE_LEG, (0, 0, 2))
+            tracker.roster[sl2_key] = Candidate(
+                name="Leg2 Sitting", party_index=0, platform=[0.25],
+                tier=TIER_STATE_LEG, seat_id=sl2_key,
+                seniority=2, cycles_in_office=1,
+            )
+
+            # Cycle 3: City Council is scheduled, but House (even cycles) is not
+            assignments, p_assign = tracker.resolve_cycle_assignments(3, nation, player)
+
+            # TermPlayer and Council Max reached 3-term limit -> cannot seek reelection
+            self.assertNotIn(cc_player_key, tracker.roster)
+            self.assertNotIn(cc_max_key, tracker.roster)
+            self.assertIsNone(p_assign)
+
+            # Council Ok was at 2 terms -> successfully assigned for reelection
+            self.assertIn(cc_ok_key, assignments)
+            self.assertTrue(assignments[cc_ok_key].is_reelection)
+            self.assertEqual(assignments[cc_ok_key].candidate.name, "Council Ok")
+
+    def test_opponent_term_limit_recycling_and_suffix_increment(self):
+        rng = random.Random(606)
+        nation = build_nation("OppTermNation", ["Economy"], load_party_names(), rng=rng)
+        player = PlayerProfile(
+            name="OppCheckPlayer",
+            home_state=0,
+            home_city=0,
+            home_district=0,
+            party_index=0,
+            platform=[0.25],
+            current_tier=TIER_CITY_COUNCIL,
+            current_seat=(TIER_CITY_COUNCIL, (0, 0, 0)),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sen_path = os.path.join(tmp, "seniority.xlsx")
+            tracker = SeniorityTracker(filepath=sen_path)
+            nm = NameManager(
+                load_in_party_names(),
+                load_out_party_names(),
+                player_name=player.name,
+                rng=rng,
+            )
+
+            assignments, _ = tracker.resolve_cycle_assignments(1, nation, player)
+            cc_key = (TIER_CITY_COUNCIL, (0, 0, 1))
+
+            # Initial build: cache opponents for Party 1
+            races1 = tracker.build_live_races(
+                TIER_CITY_COUNCIL, 1, nation, player, assignments, nm, rng=rng
+            )
+            race1 = next(r for r in races1 if r.seat_key == cc_key)
+            opp1 = next(c for c in race1.candidates if c.party_index == 1)
+            initial_name = opp1.name
+            initial_plat = list(opp1.platform)
+
+            # Simulate Party 1 winning and serving 3 cycles (reaching 3-term limit for City Council)
+            tracker.seat_streaks[cc_key] = (1, 3)
+
+            # Cycle 2 build: City Council term limit (3 cycles) reached for Party 1 incumbent!
+            races2 = tracker.build_live_races(
+                TIER_CITY_COUNCIL, 2, nation, player, assignments, nm, rng=rng
+            )
+            race2 = next(r for r in races2 if r.seat_key == cc_key)
+            opp2 = next(c for c in race2.candidates if c.party_index == 1)
+
+            # Opponent name must have incremented suffix
+            self.assertEqual(opp2.name, f"{initial_name} 2")
+            # Grudge cycles for the seat must reset to 0
+            self.assertEqual(race2.incumbent_cycles, 0)
+            self.assertEqual(tracker.seat_streaks[cc_key], (1, 0))
+
 
 if __name__ == "__main__":
     unittest.main()

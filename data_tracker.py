@@ -23,6 +23,8 @@ from constants import (
     SENATORS_PER_STATE,
     SENIORITY_FILE,
     SENIORITY_HEADERS,
+    TERM_LENGTH_CYCLES,
+    TERM_LIMITS,
     TIER_CITY_COUNCIL,
     TIER_GOVERNOR,
     TIER_HOUSE,
@@ -69,6 +71,14 @@ def load_in_party_names(filepath: str = IN_PARTY_FILE) -> list[str]:
 def load_out_party_names(filepath: str = OUT_PARTIES_FILE) -> list[str]:
     """Load opposing-party candidate names from names/out_parties.txt."""
     return load_name_list(filepath)
+
+
+def increment_name_suffix(name: str) -> str:
+    """Add or increment numeric suffix at the end of a candidate name (e.g., 'Bob 2' -> 'Bob 3')."""
+    parts = name.rsplit(" ", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return f"{parts[0]} {int(parts[1]) + 1}"
+    return f"{name} 2"
 
 
 class NameManager:
@@ -425,6 +435,70 @@ def _seat_matches_scope(
     return False
 
 
+def get_candidate_cycles(cand: Candidate) -> int:
+    """Return consecutive cycles served, defaulting to seniority // 2 if cycles_in_office is 0."""
+    if cand.cycles_in_office > 0:
+        return cand.cycles_in_office
+    if cand.seniority > 0:
+        return cand.seniority // YEARS_PER_CYCLE
+    return 0
+
+
+def get_max_cycles_for_tier(tier: int) -> int:
+    """Return the maximum consecutive cycles an incumbent can serve before term limit."""
+    return TERM_LIMITS[tier] * TERM_LENGTH_CYCLES[tier]
+
+
+def get_higher_office_seat(
+    player: PlayerProfile, cycle: int, nation: Nation
+) -> Optional[SeatKey]:
+    """Return the SeatKey of the office one tier above player holding an election in cycle."""
+    if player.current_tier is None or player.current_tier <= TIER_PRESIDENT:
+        return None
+    higher_tier = player.current_tier - 1
+    if higher_tier == TIER_PRESIDENT:
+        return (TIER_PRESIDENT, ()) if is_election_cycle(higher_tier, cycle) else None
+    if higher_tier == TIER_GOVERNOR:
+        st = nation.states[player.home_state]
+        return (
+            (TIER_GOVERNOR, (player.home_state,))
+            if is_election_cycle(higher_tier, cycle, st.wave)
+            else None
+        )
+    if higher_tier == TIER_SENATOR:
+        sen_wave = (cycle - 1) % SENATORS_PER_STATE
+        return (TIER_SENATOR, (player.home_state, sen_wave))
+    if higher_tier == TIER_HOUSE:
+        return (
+            (TIER_HOUSE, (player.home_state, player.home_city))
+            if is_election_cycle(higher_tier, cycle)
+            else None
+        )
+    if higher_tier == TIER_MAYOR:
+        return (
+            (TIER_MAYOR, (player.home_state, player.home_city))
+            if is_election_cycle(higher_tier, cycle)
+            else None
+        )
+    if higher_tier == TIER_STATE_LEG:
+        return (
+            TIER_STATE_LEG,
+            (player.home_state, player.home_city, player.home_district),
+        )
+    return None
+
+
+def is_player_up_for_reelection(
+    player: PlayerProfile, cycle: int, nation: Nation
+) -> bool:
+    """Return True if player's current office is scheduled for an election in cycle."""
+    if player.current_tier is None or player.current_seat is None:
+        return False
+    tier = player.current_tier
+    wave = get_seat_wave(player.current_seat, nation)
+    return is_election_cycle(tier, cycle, wave)
+
+
 class SeniorityTracker:
     """Maintains active in-party politicians, vacancies, seniority advancement, and opponents."""
 
@@ -630,16 +704,23 @@ class SeniorityTracker:
             for sk in scheduled:
                 if sk in self.roster:
                     incumbent = self.roster[sk]
-                    assignment = ElectionAssignment(
-                        seat_key=sk,
-                        tier=tier,
-                        candidate=incumbent,
-                        is_promotion=False,
-                        is_reelection=True,
-                    )
-                    assignments[sk] = assignment
-                    if incumbent.is_player:
-                        player_assignment = assignment
+                    max_cycles = get_max_cycles_for_tier(tier)
+                    if get_candidate_cycles(incumbent) >= max_cycles:
+                        # Incumbent reached term limit -> cannot run for re-election
+                        self.roster.pop(sk, None)
+                        self.seat_streaks.pop(sk, None)
+                        vacant_seats.append(sk)
+                    else:
+                        assignment = ElectionAssignment(
+                            seat_key=sk,
+                            tier=tier,
+                            candidate=incumbent,
+                            is_promotion=False,
+                            is_reelection=True,
+                        )
+                        assignments[sk] = assignment
+                        if incumbent.is_player:
+                            player_assignment = assignment
                 else:
                     vacant_seats.append(sk)
 
@@ -871,6 +952,16 @@ class SeniorityTracker:
                     candidates.append(in_cand)
                 else:
                     opp = seat_opponents.get(party.index)
+                    inc_party, streak_cycles = self.seat_streaks.get(sk, (None, 0))
+                    max_cycles = get_max_cycles_for_tier(sk[0])
+                    if inc_party == party.index and streak_cycles >= max_cycles:
+                        # Opponent reached term limit -> recycle name with suffix, resample platform, reset streak
+                        self.seat_streaks[sk] = (inc_party, 0)
+                        if opp is not None:
+                            opp.name = increment_name_suffix(opp.name)
+                            opp.platform = sample_candidate_platform(party.platform, rng=rng)
+                            opp.cycles_in_office = 0
+
                     if opp is None:
                         opp_name = name_manager.draw_out_party_name(self.active_names())
                         opp_plat = sample_candidate_platform(party.platform, rng=rng)

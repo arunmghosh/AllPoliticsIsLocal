@@ -7,6 +7,8 @@ import numpy as np
 
 from constants import LIVE_BATCHES, VOTES_PER_DISTRICT
 from custom_types import (
+    Candidate,
+    District,
     LiveBatchResult,
     LiveRaceSnapshot,
     LiveRaceSpec,
@@ -218,4 +220,79 @@ def run_live_elections(
             snap.candidate_shares[snap.leader_party],
         )
     return outcomes, batch_results
+
+
+def run_live_primary_race(
+    seat_key: SeatKey,
+    tier: int,
+    label: str,
+    districts: list[District],
+    player_cand: Candidate,
+    opponent_cand: Candidate,
+    party: Party,
+    input_fn: Callable[[str], str],
+    output_fn: Callable[[str], None] = print,
+    rng: Optional[random.Random] = None,
+    np_rng: Optional[np.random.Generator] = None,
+) -> tuple[Candidate, float]:
+    """Run a 10-batch live primary election between player and an in-party opponent."""
+    race = LiveRaceSpec(
+        seat_key=seat_key,
+        tier=tier,
+        label=f"PRIMARY: {label}",
+        districts=districts,
+        candidates=[player_cand, opponent_cand],
+        has_player=True,
+    )
+    prob_mat = precompute_race_probabilities(race)
+    cand_votes = [0, 0]
+    num_dist = len(districts)
+    total_votes = VOTES_PER_DISTRICT * num_dist
+
+    output_fn(f"\n========================================")
+    output_fn(f"LIVE PRIMARY ELECTION: {label}")
+    output_fn(f"Contenders: {player_cand.name} * (You) vs. {opponent_cand.name} ({party.name})")
+    output_fn(f"========================================")
+
+    for batch_num in range(1, LIVE_BATCHES + 1):
+        batch_counts = simulate_live_batch(
+            race, prob_matrix=prob_mat, rng=rng, np_rng=np_rng
+        )
+        cand_votes[0] += batch_counts[0]
+        cand_votes[1] += batch_counts[1]
+        reported_votes = batch_num * (VOTES_PER_DISTRICT // LIVE_BATCHES) * num_dist
+        pct_rep = int((reported_votes / total_votes) * 100)
+
+        tot = cand_votes[0] + cand_votes[1]
+        p0_pct = (cand_votes[0] / tot) * 100.0 if tot > 0 else 50.0
+        p1_pct = (cand_votes[1] / tot) * 100.0 if tot > 0 else 50.0
+
+        output_fn(
+            f"\n=== PRIMARY ELECTION LIVE: Batch {batch_num}/{LIVE_BATCHES} ({pct_rep}% reporting) ===\n"
+            f"{label}:\n"
+            f"  - {player_cand.name} * ({party.name}): {cand_votes[0]:,} votes ({p0_pct:.2f}%)\n"
+            f"  - {opponent_cand.name} ({party.name}): {cand_votes[1]:,} votes ({p1_pct:.2f}%)"
+        )
+        input_fn(
+            f"\nPrimary Batch {batch_num}/{LIVE_BATCHES} complete. Press Enter to continue (Q=quit, R=restart): "
+        )
+
+    tot = cand_votes[0] + cand_votes[1]
+    p0_pct = (cand_votes[0] / tot) * 100.0 if tot > 0 else 50.0
+    p1_pct = (cand_votes[1] / tot) * 100.0 if tot > 0 else 50.0
+
+    if cand_votes[0] >= cand_votes[1]:
+        winner = player_cand
+        win_pct = p0_pct
+    else:
+        winner = opponent_cand
+        win_pct = p1_pct
+
+    output_fn(f"\n=== FINAL PRIMARY ELECTION RESULTS ===")
+    you_tag = " *" if winner.is_player else ""
+    output_fn(
+        f"  {label}: {winner.name}{you_tag} ({party.name}) WINS PRIMARY with {win_pct:.2f}%!\n"
+    )
+    return winner, win_pct
+
 

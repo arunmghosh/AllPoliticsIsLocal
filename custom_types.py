@@ -101,6 +101,7 @@ class PlayerProfile:
     current_tier: Optional[int] = None
     current_seat: Optional[SeatKey] = None
     elected_cycle: Optional[int] = None
+    pending_party_challenge: bool = False
 
 
 @dataclass

@@ -233,6 +233,305 @@ class TestRules(unittest.TestCase):
                 )
             self.assertEqual(outcome, "won")
 
+    def test_primary_challenge_win_flow(self):
+        # Player wins City Council in cycle 1. In cycle 2, issues primary challenge for State Leg, wins it, and wins general!
+        inputs = iter(
+            [
+                "PrimNation", "1", "1", "HeroPrim", "1", "1", "1", "n", "0.25",
+                # Cycle 1: City Council general tweak
+                "n",
+                # Cycle 2: Primary challenge prompt -> yes!
+                "y",
+                # Tweak before primary
+                "n",
+                # Cycle 3 quit
+                "q",
+            ]
+        )
+        outputs: list[str] = []
+
+        from custom_types import Candidate, ElectionAssignment
+
+        def fake_resolve(self, cycle, nation, player):
+            if cycle == 1:
+                cc_key = (TIER_CITY_COUNCIL, (0, 0, 0))
+                cand = Candidate(name=player.name, party_index=0, platform=[0.25], tier=TIER_CITY_COUNCIL, seat_id=cc_key, is_player=True)
+                assign = ElectionAssignment(seat_key=cc_key, tier=TIER_CITY_COUNCIL, candidate=cand, is_promotion=False, is_reelection=False)
+                return {cc_key: assign}, assign
+            sl_key = (TIER_STATE_LEG, (0, 0, 0))
+            sl_cand = Candidate(name="Leg Nominee", party_index=0, platform=[0.25], tier=TIER_STATE_LEG, seat_id=sl_key, is_player=False)
+            assign_sl = ElectionAssignment(seat_key=sl_key, tier=TIER_STATE_LEG, candidate=sl_cand, is_promotion=True, is_reelection=False)
+            cc_key = (TIER_CITY_COUNCIL, (0, 0, 0))
+            cand = Candidate(name=player.name, party_index=0, platform=[0.25], tier=TIER_CITY_COUNCIL, seat_id=cc_key, is_player=True)
+            assign_cc = ElectionAssignment(seat_key=cc_key, tier=TIER_CITY_COUNCIL, candidate=cand, is_promotion=False, is_reelection=True)
+            return {sl_key: assign_sl, cc_key: assign_cc}, assign_cc
+
+        def fake_live(races, parties, player_party, input_fn, output_fn=print, **kwargs):
+            return {r.seat_key: (0, 60.0) for r in races}, []
+
+        def fake_primary(seat_key, tier, label, districts, player_cand, opponent_cand, party, input_fn, output_fn=print, **kwargs):
+            return player_cand, 58.0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = os.path.join(tmp, "data")
+            results_dir = os.path.join(tmp, "results")
+            with (
+                patch.object(runner.SeniorityTracker, "resolve_cycle_assignments", fake_resolve),
+                patch("runner.run_live_elections", side_effect=fake_live),
+                patch("runner.run_live_primary_race", side_effect=fake_primary),
+            ):
+                with self.assertRaises(QuitGame):
+                    runner.run_single_game(
+                        raw_input_fn=lambda _: next(inputs),
+                        output_fn=outputs.append,
+                        data_dir=data_dir,
+                        results_dir=results_dir,
+                        rng=random.Random(10),
+                    )
+            joined = "\n".join(outputs)
+            self.assertIn("PRIMARY VICTORY: You defeated Leg Nominee", joined)
+            self.assertIn("nominee for State Legislature", joined)
+
+    def test_primary_challenge_lose_no_stakes_retains_office(self):
+        # Player is Mayor (not up for reelection in even cycle 2). Challenges House nominee, loses primary -> retains Mayor office
+        inputs = iter(
+            [
+                "MayorNation", "1", "1", "MayorHero", "1", "1", "1", "n", "0.25",
+                # Cycle 1: initial run
+                "n",  # tweak?
+                # Cycle 2: Primary challenge prompt for House -> yes!
+                "y",
+                "n",  # tweak?
+                "q",  # quit
+            ]
+        )
+        outputs: list[str] = []
+
+        from custom_types import Candidate, ElectionAssignment
+
+        def fake_resolve(self, cycle, nation, player):
+            if cycle == 1:
+                m_key = (TIER_MAYOR, (0, 0))
+                cand = Candidate(name=player.name, party_index=0, platform=[0.25], tier=TIER_MAYOR, seat_id=m_key, is_player=True)
+                assign = ElectionAssignment(seat_key=m_key, tier=TIER_MAYOR, candidate=cand, is_promotion=False, is_reelection=False)
+                return {m_key: assign}, assign
+            h_key = (TIER_HOUSE, (0, 0))
+            h_cand = Candidate(name="Other House", party_index=0, platform=[0.25], tier=TIER_HOUSE, seat_id=h_key, is_player=False)
+            assign = ElectionAssignment(seat_key=h_key, tier=TIER_HOUSE, candidate=h_cand, is_promotion=True, is_reelection=False)
+            return {h_key: assign}, None
+
+        def fake_live(races, parties, player_party, input_fn, output_fn=print, **kwargs):
+            return {r.seat_key: (0, 60.0) for r in races}, []
+
+        def fake_primary(seat_key, tier, label, districts, player_cand, opponent_cand, party, input_fn, output_fn=print, **kwargs):
+            return opponent_cand, 54.0  # Player loses primary!
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = os.path.join(tmp, "data")
+            results_dir = os.path.join(tmp, "results")
+
+            with (
+                patch.object(runner.SeniorityTracker, "resolve_cycle_assignments", fake_resolve),
+                patch("runner.run_live_elections", side_effect=fake_live),
+                patch("runner.run_live_primary_race", side_effect=fake_primary),
+            ):
+                with self.assertRaises(QuitGame):
+                    runner.run_single_game(
+                        raw_input_fn=lambda _: next(inputs),
+                        output_fn=outputs.append,
+                        data_dir=data_dir,
+                        results_dir=results_dir,
+                        rng=random.Random(11),
+                    )
+
+            joined = "\n".join(outputs)
+            self.assertIn("NO STAKES", joined)
+            self.assertIn("PRIMARY DEFEAT", joined)
+            self.assertIn("You retain your current office as Mayor", joined)
+
+    def test_primary_challenge_lose_high_stakes_game_over(self):
+        # Player is City Council (up for reelection every cycle). Challenges State Leg, loses primary -> Game Over!
+        inputs = iter(
+            [
+                "StakesNation", "1", "1", "StakesHero", "1", "1", "1", "n", "0.25",
+                # Cycle 1: City Council win
+                "n",  # tweak?
+                # Cycle 2: Primary challenge prompt -> yes!
+                "y",
+                "n",  # tweak?
+                "n",  # save results? no
+            ]
+        )
+        outputs: list[str] = []
+
+        def fake_live(races, parties, player_party, input_fn, output_fn=print, **kwargs):
+            return {r.seat_key: (0, 60.0) for r in races}, []
+
+        def fake_primary(seat_key, tier, label, districts, player_cand, opponent_cand, party, input_fn, output_fn=print, **kwargs):
+            return opponent_cand, 57.0  # Player loses primary!
+
+        from custom_types import Candidate, ElectionAssignment
+
+        def fake_resolve(self, cycle, nation, player):
+            if cycle == 1:
+                cc_key = (TIER_CITY_COUNCIL, (0, 0, 0))
+                cand = Candidate(name=player.name, party_index=0, platform=[0.25], tier=TIER_CITY_COUNCIL, seat_id=cc_key, is_player=True)
+                assign = ElectionAssignment(seat_key=cc_key, tier=TIER_CITY_COUNCIL, candidate=cand, is_promotion=False, is_reelection=False)
+                return {cc_key: assign}, assign
+            sl_key = (TIER_STATE_LEG, (0, 0, 0))
+            sl_cand = Candidate(name="Leg Nominee", party_index=0, platform=[0.25], tier=TIER_STATE_LEG, seat_id=sl_key, is_player=False)
+            assign_sl = ElectionAssignment(seat_key=sl_key, tier=TIER_STATE_LEG, candidate=sl_cand, is_promotion=True, is_reelection=False)
+            cc_key = (TIER_CITY_COUNCIL, (0, 0, 0))
+            cand = Candidate(name=player.name, party_index=0, platform=[0.25], tier=TIER_CITY_COUNCIL, seat_id=cc_key, is_player=True)
+            assign_cc = ElectionAssignment(seat_key=cc_key, tier=TIER_CITY_COUNCIL, candidate=cand, is_promotion=False, is_reelection=True)
+            return {sl_key: assign_sl, cc_key: assign_cc}, assign_cc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = os.path.join(tmp, "data")
+            results_dir = os.path.join(tmp, "results")
+            with (
+                patch.object(runner.SeniorityTracker, "resolve_cycle_assignments", fake_resolve),
+                patch("runner.run_live_elections", side_effect=fake_live),
+                patch("runner.run_live_primary_race", side_effect=fake_primary),
+            ):
+                outcome = runner.run_single_game(
+                    raw_input_fn=lambda _: next(inputs),
+                    output_fn=outputs.append,
+                    data_dir=data_dir,
+                    results_dir=results_dir,
+                    rng=random.Random(12),
+                )
+            self.assertEqual(outcome, "lost_election")
+            joined = "\n".join(outputs)
+            self.assertIn("STAKES: You are up for re-election", joined)
+            self.assertIn("PRIMARY DEFEAT", joined)
+            self.assertIn("Game Over!", joined)
+
+    def test_primary_challenge_general_loss_no_stakes_retains_office(self):
+        # Player is Mayor (not up for reelection in cycle 2). Wins primary for House, but loses general election -> retains Mayor!
+        inputs = iter(
+            [
+                "GenLossNation", "1", "1", "MayorGen", "1", "1", "1", "n", "0.25",
+                "n",  # tweak cycle 1
+                "y",  # issue primary challenge? yes!
+                "n",  # tweak before primary? no
+                "q",  # quit after cycle 2
+            ]
+        )
+        outputs: list[str] = []
+
+        from custom_types import Candidate, ElectionAssignment
+
+        def fake_resolve(self, cycle, nation, player):
+            if cycle == 1:
+                m_key = (TIER_MAYOR, (0, 0))
+                cand = Candidate(name=player.name, party_index=0, platform=[0.25], tier=TIER_MAYOR, seat_id=m_key, is_player=True)
+                assign = ElectionAssignment(seat_key=m_key, tier=TIER_MAYOR, candidate=cand, is_promotion=False, is_reelection=False)
+                return {m_key: assign}, assign
+            h_key = (TIER_HOUSE, (0, 0))
+            h_cand = Candidate(name="Other House", party_index=0, platform=[0.25], tier=TIER_HOUSE, seat_id=h_key, is_player=False)
+            assign = ElectionAssignment(seat_key=h_key, tier=TIER_HOUSE, candidate=h_cand, is_promotion=True, is_reelection=False)
+            return {h_key: assign}, None
+
+        def fake_primary(seat_key, tier, label, districts, player_cand, opponent_cand, party, input_fn, output_fn=print, **kwargs):
+            return player_cand, 60.0  # Player wins primary!
+
+        def fake_live(races, parties, player_party, input_fn, output_fn=print, **kwargs):
+            # In cycle 1, player wins (party 0). In cycle 2 (House general), player loses (party 1 wins)!
+            if any(r.tier == TIER_MAYOR for r in races):
+                return {r.seat_key: (0, 60.0) for r in races}, []
+            return {r.seat_key: (1, 65.0) for r in races}, []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = os.path.join(tmp, "data")
+            results_dir = os.path.join(tmp, "results")
+            with (
+                patch.object(runner.SeniorityTracker, "resolve_cycle_assignments", fake_resolve),
+                patch("runner.run_live_elections", side_effect=fake_live),
+                patch("runner.run_live_primary_race", side_effect=fake_primary),
+            ):
+                with self.assertRaises(QuitGame):
+                    runner.run_single_game(
+                        raw_input_fn=lambda _: next(inputs),
+                        output_fn=outputs.append,
+                        data_dir=data_dir,
+                        results_dir=results_dir,
+                        rng=random.Random(13),
+                    )
+            joined = "\n".join(outputs)
+            self.assertIn("PRIMARY VICTORY", joined)
+            self.assertIn("You lost the general election", joined)
+            self.assertIn("you retain your current office!", joined)
+
+    def test_retaliatory_primary_challenge_after_defying_party_manager(self):
+        # Defying party manager triggers retaliatory primary in the next election
+        inputs = iter(
+            [
+                "RetalNation", "1", "1", "RetalHero", "1", "1", "1", "n", "0.25",
+                "n",  # cycle 1 tweak
+                # Cycle 2: Primary challenge prompt -> yes!
+                "y",
+                "n",  # tweak
+                # Cycle 3: Player faces retaliatory primary challenge!
+                "n",  # tweak before primary
+                # Cycle 3: General election
+                "n",  # tweak general
+                "q",  # quit
+            ]
+        )
+        outputs: list[str] = []
+
+        from custom_types import Candidate, ElectionAssignment
+
+        def fake_resolve(self, cycle, nation, player):
+            if cycle == 1:
+                # Elected Mayor in cycle 1
+                m_key = (TIER_MAYOR, (0, 0))
+                cand = Candidate(name=player.name, party_index=0, platform=[0.25], tier=TIER_MAYOR, seat_id=m_key, is_player=True)
+                assign = ElectionAssignment(seat_key=m_key, tier=TIER_MAYOR, candidate=cand, is_promotion=False, is_reelection=False)
+                return {m_key: assign}, assign
+            if cycle == 2:
+                # Cycle 2: House up, not selected
+                h_key = (TIER_HOUSE, (0, 0))
+                h_cand = Candidate(name="House Nominee", party_index=0, platform=[0.25], tier=TIER_HOUSE, seat_id=h_key, is_player=False)
+                assign = ElectionAssignment(seat_key=h_key, tier=TIER_HOUSE, candidate=h_cand, is_promotion=True, is_reelection=False)
+                return {h_key: assign}, None
+            # Cycle 3: Mayor reelection (odd cycle)
+            m_key = (TIER_MAYOR, (0, 0))
+            cand = Candidate(name=player.name, party_index=0, platform=[0.25], tier=TIER_MAYOR, seat_id=m_key, is_player=True)
+            assign = ElectionAssignment(seat_key=m_key, tier=TIER_MAYOR, candidate=cand, is_promotion=False, is_reelection=True)
+            return {m_key: assign}, assign
+
+        def fake_primary(seat_key, tier, label, districts, player_cand, opponent_cand, party, input_fn, output_fn=print, **kwargs):
+            if "House" in label:
+                # Cycle 2: player loses primary with no stakes
+                return opponent_cand, 55.0
+            # Cycle 3: player survives retaliatory primary!
+            return player_cand, 60.0
+
+        def fake_live(races, parties, player_party, input_fn, output_fn=print, **kwargs):
+            return {r.seat_key: (0, 60.0) for r in races}, []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = os.path.join(tmp, "data")
+            results_dir = os.path.join(tmp, "results")
+            with (
+                patch.object(runner.SeniorityTracker, "resolve_cycle_assignments", fake_resolve),
+                patch("runner.run_live_elections", side_effect=fake_live),
+                patch("runner.run_live_primary_race", side_effect=fake_primary),
+            ):
+                with self.assertRaises(QuitGame):
+                    runner.run_single_game(
+                        raw_input_fn=lambda _: next(inputs),
+                        output_fn=outputs.append,
+                        data_dir=data_dir,
+                        results_dir=results_dir,
+                        rng=random.Random(14),
+                    )
+            joined = "\n".join(outputs)
+            self.assertIn("RETALIATORY PRIMARY CHALLENGE", joined)
+            self.assertIn("You survived the retaliatory primary challenge", joined)
+
 
 if __name__ == "__main__":
     unittest.main()
