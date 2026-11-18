@@ -273,11 +273,14 @@ Even with the fixes, I still observed a bottleneck in seniority, so I added two 
 1. Term limits for every position (1 for president, 2 for governors and mayors, 3 for everyone else)
 2. The option of issuing a primary challenge if you are not selected to advance
 
-#### Cached Run (2026-11-17_21-39-05)
+#### Cached Run (2026-11-17_21-39-05) --- Overwritten due to a bug
 I added a rule that you can't advance to the next tier until you've served at least one full term at your current tier. Combined with the above fixes, I was able to get through a run without any bugs. The result was that I made it all the way to Senator (name: Jane Carrington), and lost a primary challenge for my re-election. When I test the 4-party case, I will also test the election history feature. 
 
 ### b) 4-Party Game
 #### Initial Run
 On my first trial of the 4-party case of the game (not cached), I found a bug in the ranked choice voting mechanism. The displayed percentage was twice the actual percentage, which allowed it to surpass 100%. Everything else, including the simulation of existing election data, seemed to run smoothly (though I need to take a closer look next time). To address the issue I found, I am replacing the ranked choice method with a runoff system where the top 2 in the first round advance to a head-to-head contest. This only applies to live elections, as historical elections are called via the probability distribution. 
+
+#### Verification Run
+I did another run after implementing the runoff system, and everything went smoothly until I tried to cache it. It overwrote the run I had already cached earlier, so I need to look into the caching code and fix the bug. I want to create a new subfolder inside results for each run I cache. 
 
 ### c) 8-Party Game
