@@ -203,8 +203,28 @@ If you lose the game, you are taken to a dedicated "try again" screen that has a
 By default, this displays your election, if you are in one. Each party has a dedicated color for the entire game to make it easy to distinguish between them. You can choose to view other elections in your scope via a dropdown menu. There is a button to advance to the next batch when you are ready. 
 
 #### Format
-TODO: Write a description of the code for the GUI (I want to use Python tkinter)
-TODO: Update '2. Codebase Architecture' below
+The GUI is implemented in `gui.py` using standard Python `tkinter` and `ttk`. It encapsulates the full simulation engine within the `AllPoliticsApp` controller class, featuring a modular screen-swapping container, persistent global controls, and a four-tab gameplay view:
+
+- **Setup Flow**:
+  - `show_welcome_screen()`: Welcome banner and nation name entry.
+  - `show_issue_setup_screen()`: Selection of 1-3 issues via suggested dropdown or custom naming.
+  - `show_player_name_screen()`: High-contrast dark registration card centered on a pure black background.
+  - `show_location_setup_screen()`: Three consecutive dropdowns (State 1-50, City 1-10, District 1-40) with real-time ideological position vector readouts.
+  - `show_history_prompt_dialog()`: Modal asking whether to simulate prior historical elections (up to 50 cycles).
+  - `show_platform_setup_screen()`: Spinbox coordinate selection within district bounds with instant party alignment preview.
+
+- **Tabbed Gameplay Interface**:
+  - **Campaign Headquarters**: Status card (office, cycles, term limits), 7-tier visual career ladder tracking progress to the Presidency, cycle start button, platform tweaking modal, and a real-time campaign news log.
+  - **Election History**: Dynamic `ttk.Treeview` table displaying all cycles from `historical_data.xlsx`.
+  - **Seniority Roster**: Dynamic `ttk.Treeview` table displaying sorted in-party officeholders from `seniority.xlsx` with player row highlighting.
+  - **Live Election Viewer**: Scope dropdown menu, batch progress indicators, candidate cards with dedicated permanent party color badges, dynamic graphical progress bars, leader indicators, interactive "Next Batch" / "Complete All Batches" controls, and seamless transition to a two-candidate runoff when leader has $< 50\%$.
+
+- **Persistent Controls & End Screens**:
+  - Global **Quit** and **Restart** buttons accessible anytime, guaranteeing data folder cleanup.
+  - Conditional **Primary Challenge** popup button when eligible, supporting high-stakes or no-stakes races.
+  - Dedicated **"Try Again"** screen upon defeat with an encouraging message and career statistics.
+  - Dedicated **"Presidential Victory"** screen upon winning the Presidency within the 25-cycle limit.
+  - Post-game **Cache** button saving spreadsheets to timestamped folders in `results/` and clearing `data/`.
 
 ## 2. Codebase Architecture
 ```
@@ -222,7 +242,8 @@ AllPoliticsIsLocal/
 ├── simulator.py              # Runs election simulations, contains voting logic
 ├── reporter.py               # For live elections, reports updates and final results to the user
 ├── data_tracker.py           # Makes dynamic updates to data, stores new data
-├── runner.py                 # Driver code, takes in user input, runs game
+├── runner.py                 # Driver code, takes in user input, runs CLI game
+├── gui.py                    # Python Tkinter GUI interface for All Politics Is Local
 ├── tests/                    # Automated unit and integration test suite
 │   ├── test_construction.py  # Tests that all data structures are built correctly
 │   ├── test_naming.py        # Tests that naming rules are followed
@@ -231,7 +252,8 @@ AllPoliticsIsLocal/
 │   ├── test_rules.py         # Tests that the rules of the game (flow of gameplay, stop conditions) are followed
 │   ├── test_live.py          # Tests that live elections are reported to the user correctly
 │   ├── test_storage.py       # Tests that data is stored and/or exported correctly
-│   └── test_smoke.py         # Rapid end-to-end integration smoke test
+│   ├── test_smoke.py         # Rapid end-to-end integration smoke test
+│   └── test_gui.py           # Tests for the Tkinter GUI navigation, tabs, and simulation
 └── README.md                 # Project specification, run documentation, architecture, and usage
 ```
 
@@ -240,6 +262,7 @@ AllPoliticsIsLocal/
 The project requires **Python 3.9+** (tested on Python 3.14) with the following third-party packages:
 - `numpy` — vectorized multi-district live election batch simulation
 - `openpyxl` — creating, updating, and reading `data/historical_data.xlsx` and `data/seniority.xlsx`
+- `tkinter` — standard library graphical user interface
 
 ### Installation
 Navigate to the project root and install dependencies via `pip`:
@@ -249,10 +272,16 @@ pip3 install numpy openpyxl
 *(No additional build step is required; all candidate and party name lists are already stored in `names/`.)*
 
 ### Running the Simulator
-Start the interactive CLI simulation from the project root:
-```bash
-python3 runner.py
-```
+You can launch either the graphical user interface (GUI) or the command-line interface (CLI):
+
+- **Graphical User Interface (GUI)**:
+  ```bash
+  python3 gui.py
+  ```
+- **Command-Line Interface (CLI)**:
+  ```bash
+  python3 runner.py
+  ```
 During a session, spreadsheets are written to `data/` (`historical_data.xlsx` and `seniority.xlsx`). At the end of a game, you can choose to save those spreadsheets to a timestamped folder inside `results/` or discard them; either choice clears `data/` for the next run.
 
 ### Global Hotkeys (Usable at Any Prompt)
@@ -316,3 +345,10 @@ I did another run after implementing the runoff system, and everything went smoo
 I did a final verification run with the 8-party case, and all of the game mechanics worked smoothly. My name was "Gavin Clark", and I advanced all the way to a Senate primary. The 8-party elections are very thrilling because it's a lot harder for one candidate to get most of the vote, and your ranking in the group can change with each new batch. I am now ready to proceed to implementing a GUI. 
 
 ### d) GUI
+I implemented a full Python `tkinter` GUI (`gui.py`) following the specifications in Section 1f. The interface provides:
+- Seamless visual setup with consecutive dropdowns and live ideological readouts
+- A persistent four-tab dashboard (Campaign Headquarters, Election History, Seniority Roster, Live Election Viewer)
+- Permanent, high-contrast dedicated party colors for all candidates across live returns
+- Visual progress bars, live leader tracking, and automatic two-round runoff transitions
+- Contextual primary challenges, platform adjustments, and dedicated victory / "try again" end screens with spreadsheet caching
+- Comprehensive automated headless GUI test coverage in `tests/test_gui.py` verifying widget state transitions and simulation controls.
