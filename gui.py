@@ -71,6 +71,7 @@ from data_tracker import (
     SeniorityTracker,
     append_historical_row,
     build_historical_row,
+    get_active_live_tier_for_player,
     get_candidate_cycles,
     get_higher_office_seat,
     get_max_cycles_for_tier,
@@ -102,6 +103,7 @@ from simulator import (
     precompute_race_probabilities,
     run_default_election,
     sample_candidate_platform,
+    sample_distinct_platform,
     simulate_live_batch,
 )
 
@@ -207,18 +209,61 @@ class AllPoliticsApp(tk.Tk):
         self.show_welcome_screen()
 
     def _configure_styles(self) -> None:
-        """Configure TTK widget styling."""
+        """Configure TTK widget styling with patriotic blue/red palette."""
         style = ttk.Style(self)
         try:
             style.theme_use("clam")
         except Exception:
             pass
-        style.configure("Header.TLabel", font=("Helvetica", 18, "bold"))
-        style.configure("Subheader.TLabel", font=("Helvetica", 13, "bold"))
-        style.configure("Title.TLabel", font=("Helvetica", 24, "bold"))
-        style.configure("Bold.TLabel", font=("Helvetica", 11, "bold"))
+        # Typography & Labels
+        style.configure("Header.TLabel", font=("Helvetica", 18, "bold"), foreground="#0D47A1")
+        style.configure("Subheader.TLabel", font=("Helvetica", 13, "bold"), foreground="#1565C0")
+        style.configure("Title.TLabel", font=("Helvetica", 24, "bold"), foreground="#0D47A1")
+        style.configure("Bold.TLabel", font=("Helvetica", 11, "bold"), foreground="#1565C0")
+        style.configure("Danger.TLabel", font=("Helvetica", 13, "bold"), foreground="#C62828")
+        style.configure("Success.TLabel", font=("Helvetica", 13, "bold"), foreground="#2E7D32")
+
+        # Cards & Containers
         style.configure("Card.TFrame", relief=tk.GROOVE, borderwidth=1)
-        style.configure("Action.TButton", font=("Helvetica", 11, "bold"))
+        style.configure("TLabelframe.Label", font=("Helvetica", 11, "bold"), foreground="#0D47A1")
+
+        # Action Buttons (Blue primary, Red danger)
+        style.configure(
+            "Action.TButton",
+            font=("Helvetica", 11, "bold"),
+            background="#1565C0",
+            foreground="#FFFFFF",
+        )
+        style.map(
+            "Action.TButton",
+            background=[("active", "#0D47A1"), ("pressed", "#0D47A1")],
+            foreground=[("active", "#FFFFFF"), ("pressed", "#FFFFFF")],
+        )
+
+        style.configure(
+            "Danger.TButton",
+            font=("Helvetica", 11, "bold"),
+            background="#C62828",
+            foreground="#FFFFFF",
+        )
+        style.map(
+            "Danger.TButton",
+            background=[("active", "#B71C1C"), ("pressed", "#B71C1C")],
+            foreground=[("active", "#FFFFFF"), ("pressed", "#FFFFFF")],
+        )
+
+        # Treeview Headings in deep navy blue
+        style.configure(
+            "Treeview.Heading",
+            font=("Helvetica", 10, "bold"),
+            background="#0D47A1",
+            foreground="#FFFFFF",
+        )
+        style.map(
+            "Treeview.Heading",
+            background=[("active", "#1565C0")],
+            foreground=[("active", "#FFFFFF")],
+        )
 
     def _clear_container(self) -> None:
         """Remove all child widgets from container."""
@@ -397,16 +442,16 @@ class AllPoliticsApp(tk.Tk):
         black_bg = tk.Frame(self.container, bg="#000000")
         black_bg.pack(fill=tk.BOTH, expand=True)
 
-        # Centered dialog box / card
-        card = tk.Frame(black_bg, bg="#1E1E1E", bd=2, relief=tk.RAISED, padx=30, pady=30)
+        # Centered dialog box / card with navy border
+        card = tk.Frame(black_bg, bg="#131C2E", bd=2, relief=tk.RIDGE, padx=32, pady=30)
         card.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
         lbl_title = tk.Label(
             card,
             text="Candidate Registration",
             font=("Helvetica", 16, "bold"),
-            bg="#1E1E1E",
-            fg="#FFFFFF",
+            bg="#131C2E",
+            fg="#90CAF9",
         )
         lbl_title.pack(pady=(0, 15))
 
@@ -414,8 +459,8 @@ class AllPoliticsApp(tk.Tk):
             card,
             text="Enter your candidate name:",
             font=("Helvetica", 12),
-            bg="#1E1E1E",
-            fg="#CCCCCC",
+            bg="#131C2E",
+            fg="#ECEFF1",
         )
         lbl_prompt.pack(anchor=tk.W, pady=(0, 8))
 
@@ -424,15 +469,18 @@ class AllPoliticsApp(tk.Tk):
             card,
             textvariable=name_var,
             font=("Helvetica", 13),
-            bg="#2D2D2D",
+            bg="#1E293B",
             fg="#FFFFFF",
             insertbackground="#FFFFFF",
             width=32,
+            highlightthickness=1,
+            highlightbackground="#1976D2",
+            highlightcolor="#42A5F5",
         )
         entry.pack(fill=tk.X, pady=(0, 20))
         entry.focus_set()
 
-        btn_row = tk.Frame(card, bg="#1E1E1E")
+        btn_row = tk.Frame(card, bg="#131C2E")
         btn_row.pack(fill=tk.X)
 
         def on_continue() -> None:
@@ -454,13 +502,13 @@ class AllPoliticsApp(tk.Tk):
             btn_row,
             text="Enter the Arena ->",
             font=("Helvetica", 11, "bold"),
-            bg="#1E88E5",
+            bg="#1976D2",
             fg="#FFFFFF",
-            activebackground="#1565C0",
+            activebackground="#0D47A1",
             activeforeground="#FFFFFF",
             relief=tk.FLAT,
-            padx=12,
-            pady=6,
+            padx=14,
+            pady=7,
             command=on_continue,
         )
         btn.pack(side=tk.RIGHT)
@@ -492,7 +540,8 @@ class AllPoliticsApp(tk.Tk):
         state_frame.pack(fill=tk.X, pady=6)
 
         state_options = [
-            f"State {s.index + 1} (Wave {WAVE_LABELS[s.wave]})" for s in self.nation.states
+            f"State {s.index + 1} (Wave {WAVE_LABELS[s.wave]}) - Position: {[round(x, 2) for x in s.position]}"
+            for s in self.nation.states
         ]
         state_var = tk.StringVar(value=state_options[self.temp_state_idx])
         cb_state = ttk.Combobox(
@@ -888,14 +937,16 @@ class AllPoliticsApp(tk.Tk):
         main_frm = ttk.Frame(self.container)
         main_frm.pack(fill=tk.BOTH, expand=True)
 
-        # Header Bar
-        header = ttk.Frame(main_frm, padding=(15, 10), style="Card.TFrame")
+        # Header Bar - patriotic deep navy blue
+        header = tk.Frame(main_frm, bg="#0D47A1", padx=15, pady=10)
         header.pack(fill=tk.X, side=tk.TOP)
 
-        self.hdr_title = ttk.Label(
+        self.hdr_title = tk.Label(
             header,
             text="",
-            font=("Helvetica", 14, "bold"),
+            font=("Helvetica", 13, "bold"),
+            bg="#0D47A1",
+            fg="#FFFFFF",
         )
         self.hdr_title.pack(side=tk.LEFT)
 
@@ -904,22 +955,48 @@ class AllPoliticsApp(tk.Tk):
             text="",
             font=("Helvetica", 11, "bold"),
             padx=10,
-            pady=2,
+            pady=3,
         )
         self.hdr_party_badge.pack(side=tk.LEFT, padx=12)
 
-        self.hdr_office_lbl = ttk.Label(
+        self.hdr_office_lbl = tk.Label(
             header,
             text="",
             font=("Helvetica", 11),
+            bg="#0D47A1",
+            fg="#E3F2FD",
         )
         self.hdr_office_lbl.pack(side=tk.LEFT)
 
-        # Global buttons (Quit, Restart)
-        btn_quit = ttk.Button(header, text="Quit", command=self.confirm_quit)
-        btn_quit.pack(side=tk.RIGHT, padx=(5, 0))
+        # Global buttons (Quit in Red, Restart in Blue)
+        btn_quit = tk.Button(
+            header,
+            text="Quit",
+            font=("Helvetica", 10, "bold"),
+            bg="#C62828",
+            fg="#FFFFFF",
+            activebackground="#B71C1C",
+            activeforeground="#FFFFFF",
+            relief=tk.FLAT,
+            padx=10,
+            pady=3,
+            command=self.confirm_quit,
+        )
+        btn_quit.pack(side=tk.RIGHT, padx=(6, 0))
 
-        btn_restart = ttk.Button(header, text="Restart", command=self.confirm_restart)
+        btn_restart = tk.Button(
+            header,
+            text="Restart",
+            font=("Helvetica", 10, "bold"),
+            bg="#1976D2",
+            fg="#FFFFFF",
+            activebackground="#1565C0",
+            activeforeground="#FFFFFF",
+            relief=tk.FLAT,
+            padx=10,
+            pady=3,
+            command=self.confirm_restart,
+        )
         btn_restart.pack(side=tk.RIGHT)
 
         # Tabbed Notebook
@@ -999,7 +1076,7 @@ class AllPoliticsApp(tk.Tk):
         ladder_card = ttk.LabelFrame(top_frame, text=" Presidential Path (Tiers 7 -> 1) ", padding=12)
         ladder_card.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        self.ladder_labels: dict[int, ttk.Label] = {}
+        self.ladder_labels: dict[int, tk.Label] = {}
         ladder_tiers = [
             (TIER_CITY_COUNCIL, "7. City Council"),
             (TIER_STATE_LEG, "6. State Legislature"),
@@ -1010,8 +1087,15 @@ class AllPoliticsApp(tk.Tk):
             (TIER_PRESIDENT, "1. President (GOAL)"),
         ]
         for tier, t_name in ladder_tiers:
-            lbl = ttk.Label(ladder_card, text=f"  {t_name}  ", font=("Helvetica", 9))
-            lbl.pack(anchor=tk.W, pady=1)
+            lbl = tk.Label(
+                ladder_card,
+                text=f"  {t_name}  ",
+                font=("Helvetica", 9),
+                anchor="w",
+                padx=6,
+                pady=2,
+            )
+            lbl.pack(anchor=tk.W, fill=tk.X, pady=1)
             self.ladder_labels[tier] = lbl
 
         # Action Area / Primary Opportunity Box
@@ -1044,9 +1128,17 @@ class AllPoliticsApp(tk.Tk):
         )
         self.btn_tweak_platform.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.btn_primary_challenge = ttk.Button(
+        self.btn_primary_challenge = tk.Button(
             self.btn_row_hq,
             text="Issue Primary Challenge",
+            font=("Helvetica", 10, "bold"),
+            bg="#C62828",
+            fg="#FFFFFF",
+            activebackground="#B71C1C",
+            activeforeground="#FFFFFF",
+            relief=tk.FLAT,
+            padx=12,
+            pady=4,
             command=self.handle_issue_primary_challenge,
         )
         # Hidden by default until eligible
@@ -1103,14 +1195,41 @@ class AllPoliticsApp(tk.Tk):
             text=f"Platform: {[round(x, 2) for x in self.player.platform]}"
         )
 
-        # Highlight career ladder
+        # Highlight career ladder with vibrant badges
+        ladder_tiers = [
+            (TIER_CITY_COUNCIL, "7. City Council"),
+            (TIER_STATE_LEG, "6. State Legislature"),
+            (TIER_MAYOR, "5. Mayor"),
+            (TIER_HOUSE, "4. House of Reps"),
+            (TIER_SENATOR, "3. Senator"),
+            (TIER_GOVERNOR, "2. Governor"),
+            (TIER_PRESIDENT, "1. President (GOAL)"),
+        ]
         for tier, lbl in self.ladder_labels.items():
+            t_name = next(name for t, name in ladder_tiers if t == tier)
             if tier == self.player.current_tier:
-                lbl.config(font=("Helvetica", 10, "bold"), foreground="#1565C0")
+                p_color = self.get_party_color(self.player.party_index)
+                p_txt = self.get_party_text_color(self.player.party_index)
+                lbl.config(
+                    text=f" ★ {t_name} [CURRENT OFFICE]",
+                    font=("Helvetica", 10, "bold"),
+                    bg=p_color,
+                    fg=p_txt,
+                )
             elif self.player.current_tier is not None and tier > self.player.current_tier:
-                lbl.config(font=("Helvetica", 9), foreground="#757575")
+                lbl.config(
+                    text=f" ✓ {t_name} (Completed)",
+                    font=("Helvetica", 9, "bold"),
+                    bg="#E8F5E9",
+                    fg="#2E7D32",
+                )
             else:
-                lbl.config(font=("Helvetica", 9), foreground="#000000")
+                lbl.config(
+                    text=f"   {t_name}",
+                    font=("Helvetica", 9),
+                    bg="#F8FAFC",
+                    fg="#37474F",
+                )
 
     # =========================================================================
     # TAB 2 & 3: ELECTION HISTORY & SENIORITY
@@ -1293,15 +1412,13 @@ class AllPoliticsApp(tk.Tk):
 
         race_totals = self.live_cumulative_votes.get(self.selected_race_key, {})
         total_votes = sum(race_totals.values())
-        shares = compute_vote_percentages(race_totals) if total_votes > 0 else {}
 
-        # Sort candidates descending by votes
-        sorted_cands = sorted(
-            race.candidates,
-            key=lambda c: (race_totals.get(c.party_index, 0), -c.party_index),
+        # Sort candidate indices descending by votes
+        sorted_cand_indices = sorted(
+            range(len(race.candidates)),
+            key=lambda i: (race_totals.get(i, 0), -race.candidates[i].party_index),
             reverse=True,
         )
-        leader_party = sorted_cands[0].party_index if sorted_cands else None
 
         num_dist = len(race.districts)
         dist_total_target = VOTES_PER_DISTRICT * num_dist
@@ -1311,13 +1428,14 @@ class AllPoliticsApp(tk.Tk):
             text=f"Total Votes Counted: {total_votes:,} / {dist_total_target:,} ({pct_reported}% Reporting) across {num_dist} district(s)"
         )
 
-        for rank, cand in enumerate(sorted_cands, start=1):
+        for rank, cand_idx in enumerate(sorted_cand_indices, start=1):
+            cand = race.candidates[cand_idx]
             p_idx = cand.party_index
             p_color = self.get_party_color(p_idx)
             p_txt_col = self.get_party_text_color(p_idx)
             p_name = self.nation.parties[p_idx].name
-            votes = race_totals.get(p_idx, 0)
-            pct = shares.get(p_idx, 0.0)
+            votes = race_totals.get(cand_idx, 0)
+            pct = (votes / total_votes * 100.0) if total_votes > 0 else 0.0
 
             c_frame = ttk.Frame(self.results_inner_frame, style="Card.TFrame", padding=10)
             c_frame.pack(fill=tk.X, pady=4, padx=5)
@@ -1568,9 +1686,20 @@ class AllPoliticsApp(tk.Tk):
         self.current_live_races = [race_spec]
         self.selected_race_key = race_spec.seat_key
 
+        # Ensure candidates in primary have distinct platforms to avoid deterministic ties
+        if len(race_spec.candidates) >= 2:
+            c0, c1 = race_spec.candidates[0], race_spec.candidates[1]
+            if c0.platform == c1.platform:
+                c1.platform = sample_distinct_platform(
+                    self.nation.parties[c1.party_index].platform,
+                    existing_platform=c0.platform,
+                    rng=self.rng,
+                )
+
         self.live_prob_matrices = [precompute_race_probabilities(race_spec)]
+        # Track votes by candidate index (0..N-1) to handle same-party candidates
         self.live_cumulative_votes = {
-            race_spec.seat_key: {c.party_index: 0 for c in race_spec.candidates}
+            race_spec.seat_key: {i: 0 for i in range(len(race_spec.candidates))}
         }
         self.live_batch_num = 0
 
@@ -1587,8 +1716,10 @@ class AllPoliticsApp(tk.Tk):
         # If facing retaliatory primary, execute it first
         if self.primary_is_retaliatory and self.player_assignment:
             chal_name = self.name_manager.draw_in_party_name(self.seniority_tracker.active_names())
-            chal_plat = sample_candidate_platform(
-                self.nation.parties[self.player.party_index].platform, rng=self.rng
+            chal_plat = sample_distinct_platform(
+                self.nation.parties[self.player.party_index].platform,
+                existing_platform=self.player.platform,
+                rng=self.rng,
             )
             chal_cand = Candidate(
                 name=chal_name,
@@ -1612,8 +1743,12 @@ class AllPoliticsApp(tk.Tk):
             self.start_primary_simulation(race_spec, is_retaliatory=True)
             return
 
-        # Build general live races
-        live_tier = self.player_assignment.tier if self.player_assignment else (self.player.current_tier or TIER_CITY_COUNCIL)
+        # Build general live races; when player not up for re-election, show active elections
+        if self.player_assignment:
+            live_tier = self.player_assignment.tier
+        else:
+            live_tier = get_active_live_tier_for_player(self.player, self.current_cycle)
+
         self.current_live_races = self.seniority_tracker.build_live_races(
             live_tier=live_tier,
             cycle=self.current_cycle,
@@ -1624,9 +1759,21 @@ class AllPoliticsApp(tk.Tk):
             rng=self.rng,
         )
 
+        if not self.current_live_races:
+            self.cb_live_races["values"] = ["No live races scheduled this cycle"]
+            self.cb_live_races.current(0)
+            self.selected_race_key = None
+            self.lbl_live_batch_status.config(text="No live elections scheduled this cycle.")
+            self.btn_live_next.config(
+                text="Proceed to Next Cycle", command=self._finalize_cycle_after_voting
+            )
+            self.notebook.select(self.tab_live)
+            return
+
         self.live_prob_matrices = [precompute_race_probabilities(r) for r in self.current_live_races]
+        # Track votes by candidate index (0..N-1)
         self.live_cumulative_votes = {
-            r.seat_key: {c.party_index: 0 for c in r.candidates}
+            r.seat_key: {i: 0 for i in range(len(r.candidates))}
             for r in self.current_live_races
         }
         self.live_batch_num = 0
@@ -1648,6 +1795,10 @@ class AllPoliticsApp(tk.Tk):
         self.cb_live_races.current(player_race_idx)
         self.selected_race_key = self.current_live_races[player_race_idx].seat_key
 
+        self.btn_live_next.config(
+            text="Advance to Next Batch ->",
+            command=self.advance_live_batch,
+        )
         self.notebook.select(self.tab_live)
         self.advance_live_batch()
 
@@ -1668,8 +1819,8 @@ class AllPoliticsApp(tk.Tk):
                 np_rng=self.np_rng,
             )
             r_totals = self.live_cumulative_votes[race.seat_key]
-            for cand, count in zip(race.candidates, batch_counts):
-                r_totals[cand.party_index] += count
+            for cand_idx, count in enumerate(batch_counts):
+                r_totals[cand_idx] += count
 
         phase_title = (
             "PRIMARY ELECTION"
@@ -1703,14 +1854,15 @@ class AllPoliticsApp(tk.Tk):
         """Resolve primary challenge results."""
         assert self.active_primary_race and self.player
         r_totals = self.live_cumulative_votes[self.active_primary_race.seat_key]
-        sorted_cands = sorted(
-            self.active_primary_race.candidates,
-            key=lambda c: (r_totals.get(c.party_index, 0), -c.party_index),
+        sorted_indices = sorted(
+            range(len(self.active_primary_race.candidates)),
+            key=lambda i: (r_totals.get(i, 0), -self.active_primary_race.candidates[i].party_index),
             reverse=True,
         )
-        winner = sorted_cands[0]
+        winner_idx = sorted_indices[0]
+        winner = self.active_primary_race.candidates[winner_idx]
         total_v = sum(r_totals.values())
-        win_pct = (r_totals[winner.party_index] / total_v) * 100.0 if total_v > 0 else 50.0
+        win_pct = (r_totals[winner_idx] / total_v) * 100.0 if total_v > 0 else 50.0
 
         if self.primary_is_retaliatory:
             if winner.is_player:
@@ -1727,30 +1879,40 @@ class AllPoliticsApp(tk.Tk):
                     f"You were defeated in the retaliatory primary challenge ({win_pct:.2f}%)."
                 )
         else:
+            target_name = (
+                self.primary_target_nominee.name if self.primary_target_nominee else "the incumbent"
+            )
             if winner.is_player:
                 messagebox.showinfo(
                     "Primary Victory!",
-                    f"You defeated {self.primary_target_nominee.name} ({win_pct:.2f}%) and won the nomination!",
+                    f"You defeated {target_name} ({win_pct:.2f}%) and won the nomination!",
                 )
-                self.log_message(
-                    f"Won primary challenge for {format_seat_label(self.primary_higher_sk)} ({win_pct:.2f}%)."
-                )
-                higher_assign = self.assignments[self.primary_higher_sk]
-                higher_assign.candidate = winner
-                higher_assign.is_promotion = True
-                self.player_assignment = higher_assign
+                if self.primary_higher_sk:
+                    self.log_message(
+                        f"Won primary challenge for {format_seat_label(self.primary_higher_sk)} ({win_pct:.2f}%)."
+                    )
+                    higher_assign = self.assignments.get(self.primary_higher_sk)
+                    if higher_assign:
+                        higher_assign.candidate = winner
+                        higher_assign.is_promotion = True
+                        self.player_assignment = higher_assign
                 self.player_in_general_no_stakes = not self.primary_has_stakes
                 self.start_live_election_phase()
             else:
                 if self.primary_has_stakes:
                     self.show_lose_screen(
-                        f"You lost the primary challenge to {self.primary_target_nominee.name} ({win_pct:.2f}%) while up for re-election."
+                        f"You lost the primary challenge to {target_name} ({win_pct:.2f}%) while up for re-election."
                     )
                 else:
+                    curr_off = (
+                        OFFICE_NAMES[self.player.current_tier]
+                        if self.player.current_tier is not None
+                        else "Candidate"
+                    )
                     messagebox.showinfo(
                         "Primary Defeat",
-                        f"You were defeated by {self.primary_target_nominee.name} ({win_pct:.2f}%).\n"
-                        f"You retain your current office as {OFFICE_NAMES[self.player.current_tier]}.",
+                        f"You were defeated by {target_name} ({win_pct:.2f}%).\n"
+                        f"You retain your current office as {curr_off}.",
                     )
                     self.log_message(f"Defeated in primary challenge ({win_pct:.2f}%). Retained current office.")
                     self.player_assignment = None
@@ -1764,18 +1926,19 @@ class AllPoliticsApp(tk.Tk):
         for race in self.current_live_races:
             r_totals = self.live_cumulative_votes[race.seat_key]
             total_v = sum(r_totals.values())
-            sorted_cands = sorted(
-                race.candidates,
-                key=lambda c: (r_totals.get(c.party_index, 0), -c.party_index),
+            sorted_indices = sorted(
+                range(len(race.candidates)),
+                key=lambda i: (r_totals.get(i, 0), -race.candidates[i].party_index),
                 reverse=True,
             )
-            leader = sorted_cands[0]
-            leader_pct = (r_totals[leader.party_index] / total_v) * 100.0 if total_v > 0 else 0.0
+            leader_idx = sorted_indices[0]
+            leader = race.candidates[leader_idx]
+            leader_pct = (r_totals[leader_idx] / total_v) * 100.0 if total_v > 0 else 0.0
 
             if len(race.candidates) <= 2 or leader_pct >= 50.0:
                 self.decided_live_outcomes[race.seat_key] = (leader.party_index, leader_pct)
             else:
-                top_two = [sorted_cands[0], sorted_cands[1]]
+                top_two = [race.candidates[sorted_indices[0]], race.candidates[sorted_indices[1]]]
                 self.runoff_candidates[race.seat_key] = top_two
                 self.runoff_specs.append(
                     LiveRaceSpec(
@@ -1808,7 +1971,7 @@ class AllPoliticsApp(tk.Tk):
         self.current_live_races = list(self.runoff_specs)
         self.live_prob_matrices = [precompute_race_probabilities(r) for r in self.current_live_races]
         self.live_cumulative_votes = {
-            r.seat_key: {c.party_index: 0 for c in r.candidates}
+            r.seat_key: {i: 0 for i in range(len(r.candidates))}
             for r in self.current_live_races
         }
         self.live_batch_num = 0
@@ -1833,13 +1996,14 @@ class AllPoliticsApp(tk.Tk):
         for race in self.current_live_races:
             r_totals = self.live_cumulative_votes[race.seat_key]
             total_v = sum(r_totals.values())
-            sorted_cands = sorted(
-                race.candidates,
-                key=lambda c: (r_totals.get(c.party_index, 0), -c.party_index),
+            sorted_indices = sorted(
+                range(len(race.candidates)),
+                key=lambda i: (r_totals.get(i, 0), -race.candidates[i].party_index),
                 reverse=True,
             )
-            winner = sorted_cands[0]
-            win_pct = (r_totals[winner.party_index] / total_v) * 100.0 if total_v > 0 else 50.0
+            winner_idx = sorted_indices[0]
+            winner = race.candidates[winner_idx]
+            win_pct = (r_totals[winner_idx] / total_v) * 100.0 if total_v > 0 else 50.0
             self.decided_live_outcomes[race.seat_key] = (winner.party_index, win_pct)
 
         self._finalize_cycle_after_voting()

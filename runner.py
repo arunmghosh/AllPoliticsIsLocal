@@ -43,6 +43,7 @@ from data_tracker import (
     SeniorityTracker,
     append_historical_row,
     build_historical_row,
+    get_active_live_tier_for_player,
     get_candidate_cycles,
     get_higher_office_seat,
     get_max_cycles_for_tier,
@@ -70,6 +71,7 @@ from simulator import (
     platform_matches_party,
     run_default_election,
     sample_candidate_platform,
+    sample_distinct_platform,
 )
 
 
@@ -624,8 +626,8 @@ def run_single_game(
                 f"the party manager has entered a challenger against you for {format_seat_label(player_assignment.seat_key)}!"
             )
             chal_name = name_manager.draw_in_party_name(seniority_tracker.active_names())
-            chal_plat = sample_candidate_platform(
-                nation.parties[player.party_index].platform, rng=rng
+            chal_plat = sample_distinct_platform(
+                nation.parties[player.party_index].platform, player.platform, rng=rng
             )
             chal_cand = Candidate(
                 name=chal_name,
@@ -697,7 +699,7 @@ def run_single_game(
                     player_assignment.candidate.platform = list(player.platform)
         else:
             assert player.current_tier is not None
-            live_tier = player.current_tier
+            live_tier = get_active_live_tier_for_player(player, cycle)
             output_fn(
                 f"You are not up for election this cycle (currently {OFFICE_NAMES[player.current_tier]})."
             )

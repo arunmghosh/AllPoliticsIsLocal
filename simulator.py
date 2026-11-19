@@ -169,6 +169,31 @@ def sample_candidate_platform(
     return pos
 
 
+def sample_distinct_platform(
+    party_platform: PositionVector,
+    existing_platform: PositionVector,
+    rng: Optional[random.Random] = None,
+) -> PositionVector:
+    """Sample a candidate position vector guaranteed to be distinct from existing_platform."""
+    rng = rng or random.Random()
+    for _ in range(50):
+        plat = sample_candidate_platform(party_platform, rng=rng)
+        if plat != existing_platform:
+            return plat
+    # If repeated sampling yielded the exact same coordinates, perturb one coordinate
+    perturbed = list(existing_platform)
+    for k in range(len(perturbed)):
+        p_val = party_platform[k]
+        if p_val < MID_POS:
+            alt = round(max(0.01, min(0.49, perturbed[k] + (0.05 if perturbed[k] < 0.25 else -0.05))), 2)
+        else:
+            alt = round(max(0.51, min(0.99, perturbed[k] + (0.05 if perturbed[k] < 0.75 else -0.05))), 2)
+        if alt != perturbed[k] and is_valid_candidate_coordinate(alt):
+            perturbed[k] = alt
+            break
+    return perturbed
+
+
 def platform_matches_party(
     platform: PositionVector, party_platform: PositionVector
 ) -> bool:
@@ -356,6 +381,23 @@ def precompute_race_probabilities(race: LiveRaceSpec) -> np.ndarray:
 
     effective_dists = dists * grudge[None, :]
     scores = 1.0 / np.sqrt(effective_dists + SMOOTHING_TERM)
+
+    # When candidates share identical platforms (e.g. in a primary), introduce slight
+    # voter appeal randomness per district to break deterministic ties
+    n_cands = len(race.candidates)
+    has_identical = False
+    for i in range(n_cands):
+        for j in range(i + 1, n_cands):
+            if np.all(np.isclose(cand_platforms[i], cand_platforms[j], atol=1e-5)):
+                has_identical = True
+                break
+        if has_identical:
+            break
+
+    if has_identical:
+        appeal_noise = np.random.uniform(0.95, 1.05, size=scores.shape)
+        scores = scores * appeal_noise
+
     return scores / scores.sum(axis=1, keepdims=True)
 
 

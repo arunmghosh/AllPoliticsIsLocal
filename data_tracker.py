@@ -508,6 +508,23 @@ def player_has_served_complete_term(
     return True
 
 
+def get_active_live_tier_for_player(player: PlayerProfile, cycle: int) -> int:
+    """Return the tier holding active live elections for the player to watch this cycle."""
+    if player.current_tier is None:
+        return TIER_CITY_COUNCIL
+    t = player.current_tier
+    if t == TIER_MAYOR and not is_election_cycle(TIER_MAYOR, cycle):
+        # On even cycles, Mayors watch House elections in their state
+        return TIER_HOUSE
+    if t == TIER_HOUSE and not is_election_cycle(TIER_HOUSE, cycle):
+        # On odd cycles, House members watch Mayoral elections in their state
+        return TIER_MAYOR
+    if t == TIER_PRESIDENT and not is_election_cycle(TIER_PRESIDENT, cycle):
+        # On non-presidential cycles, President watches Gubernatorial elections
+        return TIER_GOVERNOR
+    return t
+
+
 class SeniorityTracker:
     """Maintains active in-party politicians, vacancies, seniority advancement, and opponents."""
 
