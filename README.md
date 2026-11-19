@@ -352,3 +352,20 @@ I implemented a full Python `tkinter` GUI (`gui.py`) following the specification
 - Visual progress bars, live leader tracking, and automatic two-round runoff transitions
 - Contextual primary challenges, platform adjustments, and dedicated victory / "try again" end screens with spreadsheet caching
 - Comprehensive automated headless GUI test coverage in `tests/test_gui.py` verifying widget state transitions and simulation controls.
+
+#### Initial Run
+On my first trial of the game using the GUI (not cached), I found the following bugs/structural problems with the codebase:
+
+- I didn’t like grayscale colorscheme
+- State positions were not visible in the dropdown
+- There was a deterministic tie when two candidates have the exact same platform in a primary
+- The live election viewer did not display any new live elections when I was not running in an election for a cycle
+- My primary challenger also had the exact same platform as me, leading to a deterministic tie
+
+To address those issues, I made the following fixes:
+
+- Added a red/blue base color scheme, and the party color for the campaign headquarters
+- Made state positions visible when choosing a home state
+- Added slight voter appeal perturbations in the case of a deterministic tie based on Euclidean distance
+- Found bug in live viewer (fixed the elections in scope in the data tracker)
+- Randomized primary challenger platforms
