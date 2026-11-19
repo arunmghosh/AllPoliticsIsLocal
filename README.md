@@ -284,3 +284,5 @@ On my first trial of the 4-party case of the game (not cached), I found a bug in
 I did another run after implementing the runoff system, and everything went smoothly in terms of the game mechanics. Unfortunately, however, I lost a mayoral re-election (my character was Elsie Verner). The main thing I want to do after testing the 8-party case is add a nice GUI and make the program a Python executable file.  
 
 ### c) 8-Party Game
+#### Cached Run (2026-11-18_17-34-09)
+I did a final verification run with the 8-party case, and all of the game mechanics worked smoothly. My name was "Gavin Clark", and I advanced all the way to a Senate primary. The 8-party elections are very thrilling because it's a lot harder for one candidate to get most of the vote, and your ranking in the group can change with each new batch. I am now ready to proceed to implementing a GUI and creating an .exe file for this game. 
