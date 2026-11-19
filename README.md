@@ -178,6 +178,34 @@ Here is the general workflow for each cycle:
 
 The game has a 25-cycle (50-year) time limit from when you start. Cycle 1 is the first year of the historical data, and you can simulate all way through Cycle 50 before you start. Suppose you start at Cycle 51. The ultimate objective is to be elected president in Cycle 75 or earlier. If you lose any election, you lose the game. If you are not elected president by the end of Cycle 75, you also lose. This is why it's important that you pick a path (district, city, state) with similar position vectors. You can't change your party once you set your positions, so you want those population position vectors to be within your party range. Lastly, the average of the entire nation is close to 0.5 for each position, so you want to pick moderate positions to maximize your chances of winning that race. Once you finish the game, you have the option to save the results or discard them. If you choose to save the results, the contents of the data subfolder are moved to into the results subfolder, into a subfolder of results with a date/time stamp. The data subfolder is always wiped clean to prepare for the next game. 
 
+### f) GUI Specification
+#### Setup
+When the game loads, you see a welcome screen and a space to enter the name of your nation. Then, you are taken to the issue setup page, where you select the number and names of issues you want to include in the simulation. After that, you go to a black screen with a dialog box to enter your name. 
+
+Once you enter your name, the nation is initialized, and you can select your home state, city and district from consecutive dropdown menus (you are able to see the positions of each population). Next, a dialog box appears, asking if you want to simulate prior election history. 
+
+#### During Gameplay
+While playing the game, you rotate between a series of tabs, which fill the screen if they are active:
+- Campaign headquarters (default page, has your current office / progress in the game)
+- Election history (can click on the tab in between cycles)
+- Seniority (can click on the tab in between cycles)
+- Live election viewer (takes over the screen during a cycle where you have elections to watch)
+
+You also have the following buttons:
+- Quit (accessible anytime)
+- Restart (accessible anytime)
+- Primary challenge (pops up when you have the option to issue a primary challenge)
+- Cache (pops up after you finish the game, saves your data if you wish)
+
+If you lose the game, you are taken to a dedicated "try again" screen that has an encouraging message. You can then quit or restart. There is also a win screen with the same functionality if you become president within the time limit. 
+
+#### Live Election Viewer
+By default, this displays your election, if you are in one. Each party has a dedicated color for the entire game to make it easy to distinguish between them. You can choose to view other elections in your scope via a dropdown menu. There is a button to advance to the next batch when you are ready. 
+
+#### Format
+TODO: Write a description of the code for the GUI (I want to use Python tkinter)
+TODO: Update '2. Codebase Architecture' below
+
 ## 2. Codebase Architecture
 ```
 AllPoliticsIsLocal/
@@ -241,7 +269,7 @@ For verbose per-test output:
 python3 -m unittest discover tests -v
 ```
 
-## 4. Personal Experiments / High Scores (Coming Soon)
+## 4. Personal Experiments / High Scores
 Here are my general notes/observations from playing each of the following cases of the game:
 
 ### a) 2-Party Game
@@ -286,3 +314,5 @@ I did another run after implementing the runoff system, and everything went smoo
 ### c) 8-Party Game
 #### Cached Run (2026-11-18_17-34-09)
 I did a final verification run with the 8-party case, and all of the game mechanics worked smoothly. My name was "Gavin Clark", and I advanced all the way to a Senate primary. The 8-party elections are very thrilling because it's a lot harder for one candidate to get most of the vote, and your ranking in the group can change with each new batch. I am now ready to proceed to implementing a GUI. 
+
+### d) GUI
